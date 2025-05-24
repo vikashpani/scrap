@@ -37,7 +37,15 @@ Cost Insights: Computed the average bill amount for each category, providing a v
 
 
 
+Institutional - Inpatient claims consistently show the highest average bill amounts across all age groups, with the 18 to 29 years group peaking at $4,239
+Telehealth and End-Stage Renal Disease Treatment also show relatively high average bill amounts in older age groups (particularly in the 60 and over and 45 to 59 years categories)
+Young adults (18 to 29 years) incur lower costs in most claim types, except for the unusually high Institutional - Inpatient expenses.
+Services like Independent Lab, Mobile Unit, Other, and Group Home show consistently lower billing amounts.
 
+ClaimTypes such as Mobile Unit, Group Home, and Residential Substance Abuse Treatment are absent in one or more age groups, suggesting:
+These services are either not utilized or not recorded for those specific age ranges.
+For example, Group Home and Mobile Unit are not present in the 30 to 44 and 45 to 59 age groups.
+Telehealth, End-Stage Renal Disease Treatment, and Ambulance - Land tend to have higher average bills for older groups like 60 and over
 
 
 
