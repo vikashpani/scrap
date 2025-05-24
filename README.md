@@ -5,6 +5,16 @@ To identify common columns between the cleaned df1 and df2 for potential merging
 Note – Validation of Member-Level Data Consistency
 I checked the data with Member num i can see the duplicate values only in the Ethnicity. we can confirm that data is duplicated If my understanding is wrong I will make that change accordingly.
 
+Profiling of Categorical Columns
+To better understand the structure and distribution of non-numeric (categorical) data in the merged_d
+# Step 1: Get the description of categorical columns
+cat_profile = merged_df.select_dtypes(include=['object']).describe()
+
+# Step 2: Store in Excel with sheet name
+with pd.ExcelWriter('data_profiling.xlsx', engine='openpyxl') as writer:
+    cat_profile.to_excel(writer, sheet_name='Categorical Profiling')
+
+
 # Group by MemberNum and get number of unique provider names
 member_provider_counts = df1.groupby('MemberNum')['ProvName'].nunique()
 
