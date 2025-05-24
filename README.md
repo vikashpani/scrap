@@ -28,7 +28,11 @@ multi_provider_members = member_provider_counts[member_provider_counts > 1].inde
 
 
 
+Demographic & Provider Profiling: Analyzed key categorical features (Age, MemberNum, and ProvName) to understand claim distribution and average billing trends across member groups and providers.
 
+Claim Concentration: Identified which age groups and providers had the highest number of claimholders, helping to spot clusters of utilization.
+
+Cost Insights: Computed the average bill amount for each category, providing a view into which segments (e.g., certain providers or age groups) tend to incur higher costs
 
 
 
