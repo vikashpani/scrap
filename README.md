@@ -1,4 +1,28 @@
 # scrap
+Females lack claims for Group Home and Residential Substance Abuse Treatment, both of which are present for males (82 and 15 claims respectively).
+
+Males have no claims for Mobile Unit services, which have 12 claims under females, indicating possible access or utilization differences.
+
+Other claim types dominate for both genders, but especially for females (116,679), far exceeding all other categories, suggesting broad categorization or unclassified services.
+
+Institutional - Outpatient claims are significantly higher in males (158,542) compared to females (71,160), indicating possible gender-based differences in outpatient service utilization.
+
+Telehealth claims are more frequent in females (418) than males (257), reflecting either greater access, acceptance, or necessity among females for remote care.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Step 1: Removing Duplicate Members and Merging Datasets
 To remove duplicate entries of members based on MemberNum in df1 while keeping the first occurrence.
 To identify common columns between the cleaned df1 and df2 for potential merging.
