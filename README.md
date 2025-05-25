@@ -1,4 +1,19 @@
 # scrap
+
+# Strip currency symbols, commas, etc.
+df['BillAmt'] = df['BillAmt'].astype(str).str.replace(r'[^\d.]', '', regex=True)
+
+# Convert to numeric
+df['BillAmt'] = pd.to_numeric(df['BillAmt'], errors='coerce')
+
+# Drop rows where BillAmt couldn't be converted
+df = df.dropna(subset=['BillAmt'])
+
+
+
+
+
+
 import pandas as pd
 import plotly.express as px
 
