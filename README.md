@@ -1,4 +1,92 @@
 # scrap
+import pandas as pd
+import plotly.express as px
+
+# Bin BillAmt into ranges
+bins = [475, 5000, 20000, 50000, 100000, 250000, 500000, 813439]
+labels = ['<5K', '5K–20K', '20K–50K', '50K–100K', '100K–250K', '250K–500K', '>500K']
+df['BillAmtBin'] = pd.cut(df['BillAmt'], bins=bins, labels=labels, include_lowest=True)
+
+# Create AgeGroup
+df['AgeGroup'] = df['Age'].apply(
+    lambda x: '18-29' if x < 30 else
+              '30-44' if x < 45 else
+              '45-59' if x < 60 else
+              '60+'
+)
+
+# Group the data to get counts
+grouped_df = df.groupby(['BillAmtBin', 'ClaimType', 'Race', 'AgeGroup']).size().reset_index(name='Count')
+
+# Create bar plot
+fig = px.bar(
+    grouped_df,
+    x='BillAmtBin',
+    y='Count',
+    color='ClaimType',
+    facet_col='Race',
+    facet_row='AgeGroup',
+    barmode='group',
+    text='Count',
+    title='Claim Count by Bill Amount Bin, Race, AgeGroup and Claim Type'
+)
+
+fig.update_traces(textposition='outside')
+
+fig.update_layout(
+    font_color="#303030",
+    xaxis_title="Bill Amount Range",
+    yaxis_title="Number of Claims",
+    height=900,
+    bargap=0.3
+)
+
+fig.show()
+----------------------------------------------------------------
+
+# Group and count based on all requested dimensions
+grouped_df = df.groupby(
+    ['BillAmtBin', 'ClaimType', 'Race', 'AgeGroup', 'GrpNum', 'BenefitPackage']
+).size().reset_index(name='Count')
+
+# Create bar chart with faceting on Race, AgeGroup, GrpNum, BenefitPackage
+fig = px.bar(
+    grouped_df,
+    x='BillAmtBin',
+    y='Count',
+    color='ClaimType',
+    facet_col='BenefitPackage',   # Can also try 'Race' here depending on focus
+    facet_row='GrpNum',           # Can also try 'AgeGroup' or 'Race' here
+    barmode='group',
+    text='Count',
+    title='Claim Count by Bill Amount Bin, Claim Type, Benefit Package, and GrpNum'
+)
+
+fig.update_traces(textposition='outside')
+
+fig.update_layout(
+    font_color="#303030",
+    xaxis_title="Bill Amount Range",
+    yaxis_title="Number of Claims",
+    height=1200,
+    bargap=0.3
+)
+
+fig.show()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Females lack claims for Group Home and Residential Substance Abuse Treatment, both of which are present for males (82 and 15 claims respectively).
 
 Males have no claims for Mobile Unit services, which have 12 claims under females, indicating possible access or utilization differences.
