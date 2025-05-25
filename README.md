@@ -126,3 +126,46 @@ fig.update_layout(
 )
 
 fig.show()
+
+
+
+
+-----------------------------------------------------
+
+import plotly.express as px
+
+# Group the data by Gender and ClaimType, and count frequencies
+claim_counts = (
+    df.groupby(['Gender', 'ClaimType'])['MemberNum']
+    .count()
+    .reset_index(name='ClaimCount')
+)
+
+# Plot with Plotly
+fig = px.bar(
+    claim_counts,
+    x='Gender',
+    y='ClaimCount',
+    color='ClaimType',
+    barmode='group',
+    text='ClaimCount',
+    title="Frequency of ClaimType by Gender"
+)
+
+# Styling the chart
+fig.update_traces(
+    texttemplate="%{text:,}",
+    textposition='outside',
+    marker_line=dict(width=1, color='#303030')
+)
+
+fig.update_layout(
+    font_color="#303030",
+    bargap=0.3,
+    legend_title_text='Claim Type',
+    xaxis=dict(title='Gender', showgrid=False),
+    yaxis=dict(title='Number of Claims', showgrid=False, zerolinecolor='#DBDBDB')
+)
+
+fig.show()
+
