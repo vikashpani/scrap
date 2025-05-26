@@ -1,3 +1,54 @@
+import xml.etree.ElementTree as ET
+from collections import defaultdict
+import re
+
+def flatten_xml(elem, result, tag_order, prefix=""):
+    for child in elem:
+        tag = child.tag.split("}")[-1]
+        key = f"{prefix}{tag}".lower()
+        if key not in tag_order:
+            tag_order.append(key)
+        if child.text and child.text.strip():
+            result[key].append(child.text.strip())
+        flatten_xml(child, result, tag_order, key + "_")
+
+def parse_multiple_xml_etree(file_path):
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    # Regex to match all <ConvertedSupplierInvoice>...</ConvertedSupplierInvoice> blocks
+    pattern = re.compile(r"<ConvertedSupplierInvoice\b.*?>.*?</ConvertedSupplierInvoice>", re.DOTALL)
+    matches = pattern.findall(content)
+
+    all_rows = []
+
+    for xml_fragment in matches:
+        try:
+            # Ensure it's valid XML before processing
+            elem = ET.fromstring(xml_fragment)
+            result = defaultdict(list)
+            tag_order = []
+            flatten_xml(elem, result, tag_order)
+
+            max_len = max((len(v) for v in result.values()), default=0)
+            for k in result:
+                while len(result[k]) < max_len:
+                    result[k].append("")
+
+            all_rows.append((result, tag_order.copy()))
+        except ET.ParseError as e:
+            print(f"Skipped malformed XML block: {e}")
+            continue
+
+    return all_rows
+
+
+
+
+
+
+
+
 # scrap
 
 # Strip currency symbols, commas, etc.
