@@ -1,3 +1,78 @@
+import pandas as pd
+import plotly.express as px
+from plotly.offline import init_notebook_mode
+
+init_notebook_mode(connected=True)
+px.defaults.template = "plotly_white"
+
+# Create a copy
+plot_df = merged_df.copy()
+
+# Categorize Age groups
+def categorize_age(age):
+    if age == 0:
+        return 'New Born'
+    elif age <= 18:
+        return '1 to 18 years'
+    elif age <= 35:
+        return '19 to 35 years'
+    elif age <= 59:
+        return '36 to 59 years'
+    else:
+        return '60 and over'
+
+plot_df["AgeGroup"] = plot_df['Age'].apply(categorize_age)
+
+# Group by AgeGroup and ClaimType and count
+plot_df = plot_df.groupby(['AgeGroup', 'ClaimType'])['ClaimType'].count().reset_index(name='ClaimTypeCount')
+
+# Sort by AgeGroup for better visual order
+age_order = ['New Born', '1 to 18 years', '19 to 35 years', '36 to 59 years', '60 and over']
+plot_df['AgeGroup'] = pd.Categorical(plot_df['AgeGroup'], categories=age_order, ordered=True)
+plot_df = plot_df.sort_values(['AgeGroup', 'ClaimType'])
+
+# Optional: Save to Excel
+# plot_df.to_excel("Average_Bill_Amount_by_Age_and_ClaimType.xlsx", index=False)
+
+# Create bar chart
+fig = px.bar(
+    plot_df,
+    x='AgeGroup',
+    y='ClaimTypeCount',
+    color='ClaimType',
+    text='ClaimTypeCount',
+    opacity=0.75,
+    barmode='group',
+    height=500,
+    title="Total Number of Claims by Age Group and Claim Type"
+)
+
+# Update styling
+fig.update_traces(
+    texttemplate='%{text:.0f}',
+    textposition='outside',
+    marker_line=dict(width=1, color='#303030')
+)
+
+fig.update_layout(
+    font_color="#303030",
+    bargroupgap=0.05,
+    bargap=0.3,
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, title=""),
+    xaxis=dict(title='Age Group', showgrid=False),
+    yaxis=dict(title='Claim Count', showgrid=False, zerolinecolor='#DBDBDB', showline=True, linecolor='#DBDBDB', linewidth=2)
+)
+
+fig.show()
+
+
+
+
+
+
+
+
+
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 import re
