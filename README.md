@@ -1,3 +1,12 @@
+“With Institutional claims comprising 86.16%—dominated by top provider JACOBI MEDICAL CENTER and top service code 99232—and Professional claims at just 0.123%—led by IVEY GRACE and service code 99309—the data reveals a sharp concentration of volume and impact around a few key players.”
+
+
+
+
+
+
+
+
 import plotly.express as px
 
 # Filter for selected claim types
