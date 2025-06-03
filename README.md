@@ -1,3 +1,80 @@
+1 
+
+import plotly.express as px
+import pandas as pd
+
+# Count of providers per claim type
+provider_claim_counts = merged_df.groupby(['ClaimType'])['Provider'].nunique().reset_index(name='ProviderCount')
+
+# Get top 1
+top_provider_claim = provider_claim_counts.sort_values('ProviderCount', ascending=False).head(1)
+
+fig1 = px.pie(top_provider_claim, names='ClaimType', values='ProviderCount',
+              title='Top Claim Type by Number of Providers', hole=0.3)
+
+fig1.show()
+
+
+2
+
+claim_status_df = merged_df[merged_df['ClaimType'].isin(['Professional', 'Institutional'])]
+
+claim_status_pie = claim_status_df.groupby(['ClaimType', 'ClaimStatus']).size().reset_index(name='Count')
+
+fig2 = px.sunburst(claim_status_pie, path=['ClaimType', 'ClaimStatus'], values='Count',
+                   title='Denied vs Paid Claim Distribution - Professional & Institutional')
+
+fig2.show()
+
+3
+
+service_df = merged_df[merged_df['ClaimType'].isin(['Professional', 'Institutional'])]
+
+top_service_codes = service_df.groupby(['ClaimType', 'ServiceCode']).size().reset_index(name='Count')
+top_service_codes = top_service_codes.sort_values('Count', ascending=False).groupby('ClaimType').head(10)
+
+fig3 = px.bar(top_service_codes, x='ServiceCode', y='Count', color='ClaimType',
+              barmode='group', text='Count', title='Top Service Codes by Claim Type')
+
+fig3.update_traces(textposition='outside')
+fig3.update_layout(xaxis_title='Service Code', yaxis_title='Count')
+
+fig3.show()
+
+4
+diagnosis_df = merged_df[merged_df['ClaimType'].isin(['Professional', 'Institutional'])]
+
+top_diag_codes = diagnosis_df.groupby(['ClaimType', 'DiagnosisCode']).size().reset_index(name='Count')
+top_diag_codes = top_diag_codes.sort_values('Count', ascending=False).groupby('ClaimType').head(10)
+
+fig4 = px.bar(top_diag_codes, x='DiagnosisCode', y='Count', color='ClaimType',
+              barmode='group', text='Count', title='Top Diagnosis Codes by Claim Type')
+
+fig4.update_traces(textposition='outside')
+fig4.update_layout(xaxis_title='Diagnosis Code', yaxis_title='Count')
+
+fig4.show()
+
+5
+
+
+benefit_df = merged_df[merged_df['ClaimType'].isin(['Professional', 'Institutional'])]
+
+benefit_dist = benefit_df.groupby(['ClaimType', 'BenefitCode']).size().reset_index(name='Count')
+benefit_dist = benefit_dist.sort_values('Count', ascending=False).groupby('ClaimType').head(5)
+
+fig5 = px.sunburst(benefit_dist, path=['ClaimType', 'BenefitCode'], values='Count',
+                   title='Benefit Code Distribution Across Claim Types')
+
+fig5.show()
+
+
+
+
+
+
+
+
 import pandas as pd
 import plotly.express as px
 from plotly.offline import init_notebook_mode
