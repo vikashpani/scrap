@@ -1,5 +1,48 @@
 import plotly.express as px
 
+# Filter for selected claim types
+benefit_df = merged_df[merged_df['ClaimType'].isin(['Professional', 'Institutional Inpatient'])]
+
+# Group and count
+benefit_dist = benefit_df.groupby(['ClaimType', 'BenPkg']).size().reset_index(name='Count')
+
+# Top 5 benefit codes per claim type
+benefit_dist = benefit_dist.sort_values('Count', ascending=False).groupby('ClaimType').head(5)
+
+# Bar chart
+fig5 = px.bar(
+    benefit_dist,
+    x='BenPkg',
+    y='Count',
+    color='ClaimType',
+    barmode='group',
+    text='Count',
+    title='Top 5 Benefit Codes by Claim Type',
+    height=500
+)
+
+fig5.update_traces(textposition='outside')
+fig5.update_layout(
+    xaxis_title='Benefit Code',
+    yaxis_title='Count',
+    bargap=0.3,
+    font_color="#303030",
+    legend_title='Claim Type'
+)
+
+fig5.show()
+
+
+
+
+
+
+
+
+
+
+import plotly.express as px
+
 # Filter for relevant claim types
 claim_status_df = merged_df[merged_df['ClaimType'].isin([
     'Professional', 'Institutional Inpatient', 'Institutional Outpatient'
