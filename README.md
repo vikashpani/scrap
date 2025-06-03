@@ -1,3 +1,8 @@
+Diagnosis code B20 (HIV disease) consistently ranks as the top diagnosis for patients aged 19 and above, with the highest concentration seen in the 36–59 age group
+
+
+
+
 “With Institutional claims comprising 86.16%—dominated by top provider JACOBI MEDICAL CENTER and top service code 99232—and Professional claims at just 0.123%—led by IVEY GRACE and service code 99309—the data reveals a sharp concentration of volume and impact around a few key players.”
 
 
