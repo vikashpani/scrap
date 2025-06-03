@@ -1,3 +1,40 @@
+import plotly.express as px
+
+# Filter relevant claim types
+claim_status_df = merged_df[merged_df['ClaimType'].isin([
+    'Professional', 'Institutional Inpatient', 'Institutional Outpatient'
+])]
+
+# Map PayStat codes
+claim_status_df['PayStat'] = claim_status_df['PayStat'].map({
+    'P': 'Paid',
+    'D': 'Denied'
+})
+
+# Drop rows with NaN PayStat after mapping
+claim_status_df = claim_status_df.dropna(subset=['PayStat'])
+
+# Group and count
+claim_status_pie = claim_status_df.groupby(['ClaimType', 'PayStat']).size().reset_index(name='Count')
+
+# Sunburst chart
+fig2 = px.sunburst(
+    claim_status_pie,
+    path=['ClaimType', 'PayStat'],
+    values='Count',
+    title='Percentage of Paid vs Denied Claims by Claim Type'
+)
+
+fig2.update_traces(textinfo="label+percent entry")
+
+fig2.show()
+
+
+
+
+
+
+
 1 
 
 import plotly.express as px
