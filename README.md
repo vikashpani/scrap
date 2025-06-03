@@ -1,5 +1,52 @@
 import plotly.express as px
 
+# Filter for relevant claim types
+claim_status_df = merged_df[merged_df['ClaimType'].isin([
+    'Professional', 'Institutional Inpatient', 'Institutional Outpatient'
+])]
+
+# Map PayStat codes
+claim_status_df['PayStat'] = claim_status_df['PayStat'].map({
+    'P': 'Paid',
+    'D': 'Denied'
+})
+
+# Drop rows with NaN PayStat after mapping
+claim_status_df = claim_status_df.dropna(subset=['PayStat'])
+
+# Group and count
+claim_status_count = claim_status_df.groupby(['ClaimType', 'PayStat']).size().reset_index(name='Count')
+
+# Plot as grouped bar
+fig = px.bar(
+    claim_status_count,
+    x='ClaimType',
+    y='Count',
+    color='PayStat',
+    barmode='group',
+    text='Count',
+    title='Paid vs Denied Claim Counts by Claim Type',
+    height=500
+)
+
+fig.update_traces(textposition='outside')
+fig.update_layout(
+    font_color="#303030",
+    xaxis_title='Claim Type',
+    yaxis_title='Claim Count',
+    legend_title='Claim Status',
+    bargap=0.3
+)
+
+fig.show()
+
+
+
+
+
+
+import plotly.express as px
+
 # Filter relevant claim types
 claim_status_df = merged_df[merged_df['ClaimType'].isin([
     'Professional', 'Institutional Inpatient', 'Institutional Outpatient'
