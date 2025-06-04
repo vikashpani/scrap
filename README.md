@@ -1,3 +1,15 @@
+Hi Ishita, Supreeth,
+
+I've added two more findings to the deck. As requested, I’ve included interactive graphs by converting them into HTML outputs and linking them to the graph tiles in the presentation. Please download the ZIP file, open the presentation in slideshow mode, and click on any graph tile to view the corresponding interactive graph.
+
+Thanks!
+
+
+
+
+
+
+
 claims with bill amount over 10K, there are no professional claims; only institutional claims are present, with B20 being the most common diagnosis code in outpatient (49,955 claims), followed by Z21, Z00.00, R69, and F11.20.
 
 
