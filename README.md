@@ -1,3 +1,83 @@
+import pandas as pd
+import plotly.express as px
+
+# Categorize Age Function
+def categorize_age(age):
+    if age == 0:
+        return 'New Born'
+    elif age <= 18:
+        return '1 to 18 years'
+    elif age <= 35:
+        return '19 to 35 years'
+    elif age <= 59:
+        return '36 to 59 years'
+    else:
+        return '60 and over'
+
+# Apply age category
+plot_df['AgeGroup'] = plot_df['Age'].apply(categorize_age)
+
+# Group by AgeGroup and ClaimType
+plot_df = plot_df.groupby(['AgeGroup', 'ClaimType'])['ClaimType'].count().reset_index(name='ClaimTypeCount')
+
+# Order age groups
+age_order = ['New Born', '1 to 18 years', '19 to 35 years', '36 to 59 years', '60 and over']
+plot_df['AgeGroup'] = pd.Categorical(plot_df['AgeGroup'], categories=age_order, ordered=True)
+plot_df = plot_df.sort_values(['AgeGroup', 'ClaimType'])
+
+# Create bar chart
+fig_find1 = px.bar(
+    plot_df,
+    x='AgeGroup',
+    y='ClaimTypeCount',
+    color='ClaimType',
+    text='ClaimTypeCount',
+    opacity=0.75,
+    barmode='group',
+    title='Total Number of Claims by Age Group and Claim Type'
+)
+
+# Update chart aesthetics
+fig_find1.update_traces(
+    texttemplate='%{text:.0f}',
+    textposition='outside',
+    marker_line=dict(width=1, color='#303030')
+)
+
+fig_find1.update_layout(
+    font_color="#383038",
+    bargroupgap=0.05,
+    bargap=0.2,
+    legend=dict(
+        orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+    ),
+    xaxis=dict(title='Age Group', showgrid=False),
+    yaxis=dict(
+        title='Claim Count',
+        showgrid=False,
+        zerolinecolor="#DBDBDB",
+        showline=True,
+        linecolor="#080808",
+        linewidth=2,
+        type='log'
+    )
+)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 fig_dashboard = make_subplots(
     rows=2, cols=2,
     subplot_titles=(
