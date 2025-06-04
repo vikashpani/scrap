@@ -1,3 +1,38 @@
+import plotly.express as px
+
+# Bar chart with thicker bars
+fig = px.bar(claim_percent_df,
+             x='ClaimType',
+             y='Percentage',
+             title='Percentage Distribution of Claim Types',
+             text='Percentage',
+             color='ClaimType')
+
+fig.update_traces(
+    texttemplate='%{text:.2f}%',
+    textposition='outside',
+    marker=dict(line=dict(width=0)),  # No border, solid bars
+)
+
+fig.update_layout(
+    width=800,
+    height=500,
+    bargap=0.1,  # Reduce space between bars
+    uniformtext_minsize=8,
+    uniformtext_mode='hide',
+    yaxis_title='Percentage'
+)
+
+fig.show()
+
+
+
+
+
+
+
+
+
 Hi Ishita, Supreeth,
 
 I've added two more findings to the deck. As requested, I’ve included interactive graphs by converting them into HTML outputs and linking them to the graph tiles in the presentation. Please download the ZIP file, open the presentation in slideshow mode, and click on any graph tile to view the corresponding interactive graph.
