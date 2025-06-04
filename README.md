@@ -1,3 +1,43 @@
+fig_dashboard = make_subplots(
+    rows=2, cols=2,
+    subplot_titles=(
+        "Total Number of Claims by Age Group and Claim Type",
+        "Top 5 Frequent Diagnoses by Age Group",
+        "Top Claim Type by Number of Providers",
+        "Paid vs Denied Claim Counts by Claim Type"
+    ),
+    specs=[[{"type": "bar"}, {"type": "bar"}], [{"type": "pie"}, {"type": "bar"}]]
+)
+
+# Add each figure to subplot
+fig_dashboard.add_trace(fig_find1, row=1, col=1)
+fig_dashboard.add_trace(fig_find1b, row=1, col=1)
+
+fig_dashboard.add_trace(fig_find2, row=1, col=2)
+fig_dashboard.add_trace(fig_find2b, row=1, col=2)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import pandas as pd
 import plotly.express as px
 
