@@ -1,3 +1,24 @@
+claims with bill amount over 10K, there are no professional claims; only institutional claims are present, with B20 being the most common diagnosis code in outpatient (49,955 claims), followed by Z21, Z00.00, R69, and F11.20.
+
+
+
+
+
+Institutional - Outpatient has T1019 as the most used service code with 33,840 claims.
+
+Institutional - Inpatient sees 99232 as the top service code with 1,679 claims.
+
+Professional has 99309 as the most frequent service code with 105 claims.
+
+
+
+
+
+
+
+
+
+
 import pandas as pd
 import plotly.express as px
 
