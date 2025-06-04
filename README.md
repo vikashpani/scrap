@@ -1,3 +1,59 @@
+import pandas as pd
+import plotly.express as px
+
+# Step 1: Filter Institutional and Professional
+claim_df = merged_df[merged_df['ClaimType'].isin(['Institutional', 'Professional'])]
+
+# Step 2: Count total claims per ClaimType
+claim_counts = claim_df.groupby('ClaimType').size().reset_index(name='TotalCount')
+
+# Step 3: Filter only those ClaimTypes with count > 10,000
+eligible_types = claim_counts[claim_counts['TotalCount'] > 10000]['ClaimType']
+filtered_df = claim_df[claim_df['ClaimType'].isin(eligible_types)]
+
+# Step 4: Count DiagnosisCode occurrences
+top_diag = (
+    filtered_df.groupby(['ClaimType', 'DiagnosisCode'])
+    .size()
+    .reset_index(name='Count')
+    .sort_values(['ClaimType', 'Count'], ascending=[True, False])
+    .groupby('ClaimType')
+    .head(5)
+)
+
+# Step 5: Visualization
+fig = px.bar(
+    top_diag,
+    x='DiagnosisCode',
+    y='Count',
+    color='ClaimType',
+    barmode='group',
+    text='Count',
+    title='Top 5 Diagnosis Codes by Claim Type (Count > 10K)'
+)
+
+fig.update_traces(
+    textposition='outside',
+    marker_line=dict(width=1, color='#303030')
+)
+
+fig.update_layout(
+    font_color="#303030",
+    xaxis_title='Diagnosis Code',
+    yaxis_title='Claim Count',
+    xaxis_tickangle=45,
+    height=500
+)
+
+fig.show()
+
+
+
+
+
+
+
+
 Institutional – Outpatient claims account for the majority of provider activity, representing 70.5% of all claim submissions. This indicates a strong emphasis on outpatient care across the provider network, likely driven by cost efficiency, accessibility, and broader coverage models.
 
  denial and payment rates are approximately 57.1% denied and 42.9% paid for Institutional Inpatient, 19.4% denied and 80.6% paid for Institutional Outpatient, and 22.8% denied and 77.2% paid for Professional services.
