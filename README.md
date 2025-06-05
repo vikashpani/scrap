@@ -1,3 +1,55 @@
+
+import pandas as pd
+import plotly.express as px
+
+# Filter for relevant claim types
+claim_status_df = merged_df[merged_df['ClaimType'].isin(['Professional', 'Institutional Inpatient', 'Institutional Outpatient'])]
+
+# Map PayStat codes to readable labels
+claim_status_df['PayStat'] = claim_status_df['PayStat'].map({'P': 'Paid', 'D': 'Denied'})
+
+# Drop rows with missing PayStat after mapping
+claim_status_df = claim_status_df.dropna(subset=['PayStat'])
+
+# Group by ClaimType and PayStat
+claim_status_count = claim_status_df.groupby(['ClaimType', 'PayStat']).size().reset_index(name='Count')
+
+# Calculate percentage
+total_counts = claim_status_count.groupby('ClaimType')['Count'].transform('sum')
+claim_status_count['Percentage'] = (claim_status_count['Count'] / total_counts * 100).round(2)
+
+# Label for display
+claim_status_count['label'] = claim_status_count['Count'].astype(str) + ' (' + claim_status_count['Percentage'].astype(str) + '%)'
+
+# Plot grouped bar chart
+fig_find4 = px.bar(
+    claim_status_count,
+    x='ClaimType',
+    y='Count',
+    color='PayStat',
+    barmode='group',
+    text='label',
+    title='Paid vs Denied Claim Counts by Claim Type',
+    height=500,
+    color_discrete_map={'Paid': '#90ee90', 'Denied': '#ff9999'}
+)
+
+# Style update
+fig_find4.update_traces(textposition='outside')
+fig_find4.update_layout(
+    font_color="#303030",
+    xaxis_title='Claim Type',
+    yaxis=dict(title='Claim Count', type='log', showgrid=False, zerolinecolor='#DBDBDB'),
+    legend_title='Claim Status',
+    bargap=0.3
+)
+
+
+
+
+
+
+
 import pandas as pd
 import plotly.express as px
 
