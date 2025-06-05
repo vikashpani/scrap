@@ -1,3 +1,61 @@
+import pandas as pd
+import plotly.express as px
+
+# Assume 'merged_df' is your dataframe and has columns 'ServDate' and 'ClaimType'
+merged_df['ServDate'] = pd.to_datetime(merged_df['ServDate'])
+
+# Extract 'Year-Month' format from service date
+merged_df['YearMonth'] = merged_df['ServDate'].dt.to_period('M').astype(str)
+
+# Group by YearMonth and ClaimType to get the count of claims per month
+claim_trend = merged_df.groupby(['YearMonth', 'ClaimType']).size().reset_index(name='ClaimCount')
+
+# Create ordered list of expected months (June 2024 to March 2025)
+month_order = ['2024-06', '2024-07', '2024-08', '2024-09', '2024-10',
+               '2024-11', '2024-12', '2025-01', '2025-02', '2025-03']
+
+# Ensure all months show in the plot, even if counts are 0
+claim_trend['YearMonth'] = pd.Categorical(claim_trend['YearMonth'], categories=month_order, ordered=True)
+claim_trend = claim_trend.sort_values('YearMonth')
+
+# Plot line graph
+fig = px.line(
+    claim_trend,
+    x='YearMonth',
+    y='ClaimCount',
+    color='ClaimType',
+    markers=True,
+    line_shape='spline',
+    title='Monthly Trend of Each Claim Type (Jun 2024 - Mar 2025)',
+    color_discrete_sequence=px.colors.qualitative.Safe
+)
+
+fig.update_traces(line=dict(width=2))
+
+fig.update_layout(
+    xaxis_title='Month',
+    yaxis_title='Number of Claims',
+    font_color="#303030",
+    height=500,
+    template='plotly_white',
+    legend_title_text='Claim Type',
+    xaxis=dict(
+        tickangle=45,
+        type='category',
+        categoryorder='array',
+        categoryarray=month_order
+    )
+)
+
+fig.show()
+
+
+
+
+
+
+
+
 
 import pandas as pd
 import plotly.express as px
