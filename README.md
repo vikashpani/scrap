@@ -1,3 +1,46 @@
+
+B20 (HIV Disease)
+• Highest diagnosis consistently across all months
+• Peaked in Oct 2024, slight drop by Mar 2025
+
+E11.9 (Type 2 Diabetes without complications)
+• Steady increase till Jan 2025
+• Sharp drop observed in Mar 2025
+
+
+F11.20 (Opioid dependence, uncomplicated)
+• Rose steadily till Oct 2024
+• Declined significantly after Feb 2025
+
+I10 (Essential Hypertension)
+• Gradual upward trend throughout
+• Minor dip noted after Feb 2025
+
+N18.6 (End stage renal disease)
+• Very stable over the entire period
+• Minimal fluctuations month-to-month
+
+R68.89 (Other general symptoms and signs)
+• Growth till Oct 2024, then leveled off
+• Slight drop by Mar 2025
+
+R69 (Unknown causes of morbidity/mortality)
+• Minor rise around Dec 2024
+• Dropped again by Mar 2025
+
+Z00.00 (General medical exam without abnormal findings)
+• Spike seen during Oct–Dec 2024
+• Sharp decline by Mar 2025
+
+Z21 (Asymptomatic HIV infection status)
+• Fairly stable till Jan 2025
+• Sudden decrease in the final month
+
+Z76.89 (Other specified encounters)
+• Consistently low volume throughout
+• Nearly flat by Mar 2025
+
+
 import pandas as pd
 import plotly.express as px
 
