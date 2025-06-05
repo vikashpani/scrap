@@ -1,3 +1,53 @@
+
+import pandas as pd
+import plotly.express as px
+
+# Convert 'ServDate' to datetime if it's not already
+merged_df['ServDate'] = pd.to_datetime(merged_df['ServDate'])
+
+# Extract Year-Month in desired format (e.g., Jun-2024)
+merged_df['YearMonth'] = merged_df['ServDate'].dt.strftime('%b-%Y')
+
+# Ensure proper month order for plotting
+month_order = ['Jun-2024', 'Jul-2024', 'Aug-2024', 'Sep-2024', 'Oct-2024',
+               'Nov-2024', 'Dec-2024', 'Jan-2025', 'Feb-2025', 'Mar-2025']
+merged_df['YearMonth'] = pd.Categorical(merged_df['YearMonth'], categories=month_order, ordered=True)
+
+# Filter only denied claims
+denied_df = merged_df[merged_df['PayStat'] == 'D']
+
+# Group by month and claim type to get denial counts
+denial_trend = denied_df.groupby(['YearMonth', 'ClaimType']).size().reset_index(name='DenialCount')
+
+# Plot line chart
+fig = px.line(
+    denial_trend,
+    x='YearMonth',
+    y='DenialCount',
+    color='ClaimType',
+    markers=True,
+    title='Monthly Denial Trend by Claim Type'
+)
+
+fig.update_layout(
+    xaxis_title='Month',
+    yaxis_title='Number of Denials',
+    font_color="#303030",
+    plot_bgcolor='white',
+    legend_title_text='Claim Type'
+)
+
+fig.update_traces(line=dict(width=3), marker=dict(size=6))
+
+fig.show()
+
+
+
+
+
+
+
+
 import pandas as pd
 import plotly.express as px
 
