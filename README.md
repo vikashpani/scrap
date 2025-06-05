@@ -1,3 +1,55 @@
+import pandas as pd
+import plotly.express as px
+
+# Convert ServDate to datetime
+merged_df['ServDate'] = pd.to_datetime(merged_df['ServDate'])
+
+# Extract year-month
+merged_df['YearMonth'] = merged_df['ServDate'].dt.to_period('M').astype(str)
+
+# Group by YearMonth and ClaimType
+claim_trend = merged_df.groupby(['YearMonth', 'ClaimType']).size().reset_index(name='ClaimCount')
+
+# Sort by YearMonth for proper line flow
+claim_trend = claim_trend.sort_values('YearMonth')
+
+# Line plot for each claim type
+fig = px.line(
+    claim_trend,
+    x='YearMonth',
+    y='ClaimCount',
+    color='ClaimType',
+    markers=True,
+    line_shape='spline',
+    title='Monthly Trend of Each Claim Type (Jun 2024 - Mar 2025)',
+    color_discrete_sequence=px.colors.qualitative.Safe  # light + distinguishable
+)
+
+# Update layout
+fig.update_traces(line=dict(width=2))
+fig.update_layout(
+    xaxis_title='Month',
+    yaxis_title='Number of Claims',
+    font_color="#303030",
+    height=500,
+    template='plotly_white',
+    legend_title_text='Claim Type',
+    xaxis=dict(tickangle=45)
+)
+
+fig.show()
+
+
+
+
+
+
+
+
+
+
+
+
 import plotly.express as px
 
 # Bar chart with thicker bars
