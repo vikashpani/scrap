@@ -1,3 +1,67 @@
+import pandas as pd
+import plotly.express as px
+
+# Step 1: Ensure 'ServDate' is datetime
+merged_df['ServDate'] = pd.to_datetime(merged_df['ServDate'], errors='coerce')
+
+# Step 2: Create Year-Month column
+merged_df['YearMonth'] = merged_df['ServDate'].dt.to_period('M').astype(str)
+
+# Step 3: Get top 10 diagnosis codes
+top_10_diags = (
+    merged_df['Diag']
+    .value_counts()
+    .head(10)
+    .index
+)
+
+# Step 4: Filter for only top 10
+diag_trend_df = merged_df[merged_df['Diag'].isin(top_10_diags)]
+
+# Step 5: Group by YearMonth and Diag
+trend_counts = (
+    diag_trend_df.groupby(['YearMonth', 'Diag'])
+    .size()
+    .reset_index(name='Count')
+)
+
+# Step 6: Sort YearMonth properly
+trend_counts['YearMonth'] = pd.to_datetime(trend_counts['YearMonth'])
+trend_counts = trend_counts.sort_values('YearMonth')
+
+# Step 7: Plot
+fig = px.line(
+    trend_counts,
+    x='YearMonth',
+    y='Count',
+    color='Diag',
+    markers=True,
+    title='Trend Analysis of Top 10 Diagnosis Codes',
+)
+
+fig.update_layout(
+    xaxis_title='Month',
+    yaxis_title='Claim Count',
+    xaxis=dict(
+        tickformat="%b %Y",  # Format like 'Jan 2024'
+        dtick="M1"
+    ),
+    plot_bgcolor='white',
+    font_color="#303030",
+    legend_title='Diagnosis Code'
+)
+
+fig.show()
+
+
+
+
+
+
+
+
+
+
 1,,,,,
 
 import pandas as pd
