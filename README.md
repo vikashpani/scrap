@@ -1,3 +1,82 @@
+1,,,,,
+
+import pandas as pd
+import plotly.express as px
+
+# Replace this with your actual data
+merged_df = pd.read_csv("your_data.csv")
+
+# Top 5 providers by total bill
+top_billers = (
+    merged_df.groupby('Provider')['BillAmount']
+    .sum()
+    .reset_index()
+    .sort_values(by='BillAmount', ascending=False)
+    .head(5)
+)
+
+fig1 = px.bar(
+    top_billers,
+    x='Provider',
+    y='BillAmount',
+    text='BillAmount',
+    title='Top 5 Providers by Total Billed Amount',
+    color_discrete_sequence=['#a0d8ef']  # light blue
+)
+fig1.update_traces(textposition='outside')
+fig1.update_layout(yaxis_title='Total Bill Amount', plot_bgcolor='white')
+fig1.show()
+2,,,,,,
+top_submitters = (
+    merged_df.groupby('Provider')
+    .size()
+    .reset_index(name='ClaimCount')
+    .sort_values(by='ClaimCount', ascending=False)
+    .head(5)
+)
+
+fig2 = px.bar(
+    top_submitters,
+    x='Provider',
+    y='ClaimCount',
+    text='ClaimCount',
+    title='Top 5 Providers by Number of Claims Submitted',
+    color_discrete_sequence=['#c6e2ff']  # soft blue
+)
+fig2.update_traces(textposition='outside')
+fig2.update_layout(yaxis_title='Claim Count', plot_bgcolor='white')
+fig2.show()
+3,,,,,,
+
+denied_df = merged_df[merged_df['PayStat'] == 'D']
+
+top_denied = (
+    denied_df.groupby('Provider')
+    .size()
+    .reset_index(name='DeniedCount')
+    .sort_values(by='DeniedCount', ascending=False)
+    .head(5)
+)
+
+fig3 = px.bar(
+    top_denied,
+    x='Provider',
+    y='DeniedCount',
+    text='DeniedCount',
+    title='Top 5 Providers by Number of Denied Claims',
+    color_discrete_sequence=['#ffcccc']  # light red
+)
+fig3.update_traces(textposition='outside')
+fig3.update_layout(yaxis_title='Denied Claims', plot_bgcolor='white')
+fig3.show()
+
+
+
+
+
+
+
+
 
 import pandas as pd
 import plotly.express as px
