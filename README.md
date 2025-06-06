@@ -1,3 +1,59 @@
+
+import os
+import re
+import pandas as pd
+
+def collect_usecase_sheets(root_folder):
+    dfs = []
+    count = 0
+    ARCHIVE = 'ARCHIVE'  # Define the ARCHIVE keyword or folder name
+
+    # Regex pattern to match all variants of "Use Cases" sheet names
+    use_case_pattern = re.compile(
+        r'(?:\d+(?:\.\d+)?\s*\.*\s*)?(?:SKN_)?(?:Non-)?Aliessa_?Use_?Cases|Use[\s_]?Cases(?:_[A-Za-z0-9]+)?|Use_?Cases[\sA-Za-z0-9_]*'
+    )
+
+    for dirpath, _, filenames in os.walk(root_folder):
+        for file in filenames:
+            if file.endswith('.xlsm') and file.startswith('OMSAP'):
+                file_path = os.path.join(dirpath, file)
+
+                if 'ARCHIVE' in file_path.upper() or 'MAILS' in file_path.upper():
+                    continue
+
+                count += 1
+                try:
+                    xls = pd.ExcelFile(file_path)
+                    sheet_names = xls.sheet_names
+
+                    matched_sheet = next(
+                        (s for s in sheet_names if use_case_pattern.fullmatch(s.strip())), None
+                    )
+
+                    if matched_sheet:
+                        df = pd.read_excel(file_path, sheet_name=matched_sheet)
+                        dfs.append(df)
+                    else:
+                        folder = file_path.split(os.sep)[2] if len(file_path.split(os.sep)) > 2 else "Unknown"
+                        print(f"No 'Use Cases' sheet found in: {file_path} (Folder: {folder})")
+
+                except Exception as e:
+                    print(f"Failed to read {file_path}: {e}")
+
+    print(f"Total matching files: {count}")
+    return dfs
+
+
+
+
+
+
+
+
+
+
+
+
 (?:\d+(?:\.\d+)?\s*\.*\s*)?(?:SKN_)?(?:Non-)?Aliessa_?Use_?Cases|Use[\s_]?Cases(?:_[A-Za-z0-9]+)?|Use_?Cases[\sA-Za-z0-9_]*
 
 
