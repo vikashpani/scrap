@@ -1,3 +1,14 @@
+(?:\d+(?:\.\d+)?\s*\.*\s*)?(?:SKN_)?(?:Non-)?Aliessa_?Use_?Cases|Use[\s_]?Cases(?:_[A-Za-z0-9]+)?|Use_?Cases[\sA-Za-z0-9_]*
+
+
+
+
+
+
+
+
+
+
 
 B20 (HIV Disease)
 • Highest diagnosis consistently across all months
