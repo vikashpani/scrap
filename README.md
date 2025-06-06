@@ -1,3 +1,28 @@
+def find_column_in_dfs(dfs, target_column):
+    found_in = []
+
+    for idx, df in enumerate(dfs):
+        if target_column in df.columns:
+            found_in.append((idx, df.columns.tolist()))
+
+    if found_in:
+        print(f"\n✅ Column '{target_column}' found in {len(found_in)} DataFrame(s):\n")
+        for idx, columns in found_in:
+            print(f"➡️  DataFrame #{idx} contains it. Columns: {columns}")
+    else:
+        print(f"\n❌ Column '{target_column}' not found in any DataFrame.")
+
+    return found_in
+
+
+
+
+
+
+
+
+
+
 
 import os
 import re
