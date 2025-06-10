@@ -1,3 +1,9 @@
+if not common_cols:
+    st.error("🚫 No common columns found between Member and Claim data. Cannot proceed with merging.")
+else:
+
+
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
