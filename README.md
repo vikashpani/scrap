@@ -1,3 +1,134 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+
+# ---------- Functions ----------
+def clean_columns(df):
+    df.columns = df.columns.str.strip().str.replace(" ", "")
+    return df
+
+def clean_values(df):
+    for col in df.columns:
+        df[col] = df[col].astype(str).str.strip().str.upper()
+    return df
+
+def find_member_differences(df, key_col='MemberID'):
+    dupes = df[df.duplicated(subset=key_col, keep=False)]
+    differences = []
+    for member, group in dupes.groupby(key_col):
+        differing_cols = []
+        for col in group.columns:
+            if group[col].nunique() > 1:
+                differing_cols.append(col)
+        if differing_cols:
+            row = {key_col: member}
+            for col in differing_cols:
+                row[col] = group[col].unique().tolist()
+            differences.append(row)
+    return pd.DataFrame(differences)
+
+def generate_claim_report(merged_df):
+    claim_count = merged_df['ClaimType'].value_counts()
+    claim_percentages = (claim_count / len(merged_df)) * 100
+    claim_percent_df = claim_percentages.reset_index()
+    claim_percent_df.columns = ['ClaimType', 'Percentage']
+    return claim_percent_df
+
+def render_bar_chart(claim_percent_df):
+    fig = px.bar(
+        claim_percent_df,
+        x='ClaimType',
+        y='Percentage',
+        title='Percentage Distribution of Claim Types',
+        text='Percentage',
+        color='ClaimType'
+    )
+    fig.update_traces(
+        texttemplate='%{text:.2f}%', 
+        textposition='outside',
+        marker=dict(line=dict(width=1))
+    )
+    fig.update_layout(
+        bargap=0.1,
+        uniformtext_minsize=8,
+        uniformtext_mode='hide',
+        yaxis=dict(title='Percentage', showgrid=False, zerolinecolor='gray')
+    )
+    return fig
+
+# ---------- Streamlit UI ----------
+st.set_page_config(layout="wide")
+st.title("📊 Custom Data Visualization Tool")
+
+with st.sidebar:
+    st.header("Upload Excel Files")
+    member_file = st.file_uploader("Upload Member File (.xlsx)", type=['xlsx'])
+    claim_file = st.file_uploader("Upload Claim File (.xlsx)", type=['xlsx'])
+
+    member_sheet = st.text_input("Enter Member Sheet Name", value="MemberPIC_20250609")
+    claim_sheet = st.text_input("Enter Claim Sheet Name", value="Delimited")
+
+    load_data = st.button("Load Data")
+
+if load_data and member_file and claim_file:
+    # Read files
+    df_Member = pd.read_excel(member_file, sheet_name=member_sheet)
+    df_Claim = pd.read_excel(claim_file, sheet_name=claim_sheet)
+
+    st.subheader("🔍 Data Overview")
+    st.write("✅ Member Data: ", df_Member.shape)
+    st.write(df_Member.columns.tolist())
+
+    st.write("✅ Claim Data: ", df_Claim.shape)
+    st.write(df_Claim.columns.tolist())
+
+    # Clean column names
+    df_Member = clean_columns(df_Member)
+    df_Claim = clean_columns(df_Claim)
+
+    # Multiselect for common columns
+    common_cols = list(set(df_Member.columns).intersection(set(df_Claim.columns)))
+    selected_cols = st.multiselect("Select Common Column(s) to Merge On", common_cols, default=["MemberID"])
+
+    if selected_cols:
+        df_Member = clean_values(df_Member)
+        df_Claim = clean_values(df_Claim)
+
+        # Find differences in Member table (optional)
+        diff_df = find_member_differences(df_Member, key_col=selected_cols[0])
+        if not diff_df.empty:
+            st.write("⚠️ Duplicate Member Entries with Differences")
+            st.dataframe(diff_df)
+
+        d1_deduped = df_Member.drop_duplicates(subset=selected_cols, keep='first')
+        merged_df = pd.merge(df_Claim, d1_deduped, on=selected_cols, how='left')
+
+        st.subheader("🧾 Merged DataFrame Info")
+        st.write("Shape:", merged_df.shape)
+        st.write("Columns:", merged_df.columns.tolist())
+        st.dataframe(merged_df.head())
+
+        if st.button("📈 Generate Claim Type Distribution Report"):
+            try:
+                claim_percent_df = generate_claim_report(merged_df)
+                st.dataframe(claim_percent_df)
+                st.plotly_chart(render_bar_chart(claim_percent_df), use_container_width=True)
+            except Exception as e:
+                st.error(f"Error generating chart: {e}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+_________________________
 def find_column_in_dfs(dfs, target_column):
     found_in = []
 
