@@ -1,3 +1,76 @@
+import plotly.express as px
+import pandas as pd
+
+# Filter for selected claim types
+selected_claims = ['Professional', 'Institutional Inpatient', 'Institutional Outpatient']
+service_df = merged_df[merged_df['ClaimType'].isin(selected_claims)]
+
+# Group and count
+top_service_codes = (
+    service_df.groupby(['ClaimType', 'RevCode'])
+    .size()
+    .reset_index(name="Count")
+)
+
+# Ensure RevCode is string
+top_service_codes['RevCode'] = top_service_codes['RevCode'].astype(str)
+
+# Get top 1 RevCode per ClaimType
+top_service_codes = (
+    top_service_codes
+    .sort_values('Count', ascending=False)
+    .groupby('ClaimType')
+    .head(1)
+)
+
+# Create figure
+fig_find6 = px.bar(
+    top_service_codes,
+    x='RevCode',
+    y='Count',
+    color='ClaimType',
+    barmode='overlay',
+    height=500,
+    opacity=0.75,
+    text='Count',
+    title='Top Revenue Code per Claim Type'
+)
+
+# Update trace text
+fig_find6.update_traces(textposition='auto')
+
+# Update layout
+fig_find6.update_layout(
+    xaxis_title='Revenue Code',
+    yaxis=dict(title='Count', type='log', showgrid=False, zerolinecolor='#060608'),
+    bargap=0.1
+)
+
+# 🚨 Identify missing claim types
+present_claim_types = top_service_codes['ClaimType'].unique().tolist()
+missing_claim_types = [ct for ct in selected_claims if ct not in present_claim_types]
+
+# Add annotation for each missing claim type
+for i, missing in enumerate(missing_claim_types):
+    fig_find6.add_annotation(
+        text=f"No data for {missing}",
+        xref="paper", yref="paper",
+        x=1.05, y=1 - i * 0.05,  # adjust spacing between notes
+        showarrow=False,
+        font=dict(color="crimson", size=12)
+    )
+
+fig_find6.show()
+
+
+
+
+
+
+
+
+
+
 from dateutil.relativedelta import relativedelta
 from datetime import datetime
 import pandas as pd
