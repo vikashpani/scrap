@@ -1,3 +1,49 @@
+import pandas as pd
+
+# Ensure date is in datetime format
+merged_df['ServDate'] = pd.to_datetime(merged_df['ServDate'])
+
+# Extract Year-Month in the format 'YYYY-MMM' (e.g., '2022-Mar')
+merged_df['YearMonth'] = merged_df['ServDate'].dt.strftime('%Y-%B')
+
+# Create monthly claim count summary
+claim_trend = merged_df.groupby(['YearMonth', 'ClaimType']).size().reset_index(name='ClaimCount')
+
+# Custom month ordering
+month_order = ['2022-March', '2022-July', '2022-August', '2022-September', '2022-October', '2022-November', '2022-December',
+               '2023-January', '2023-February', '2023-March', '2023-April', '2023-May', '2023-June', '2023-July', '2023-August', 
+               '2023-September', '2024-January', '2024-February', '2024-March', '2024-April', '2024-May', '2024-June', 
+               '2024-July', '2024-August', '2024-September', '2025-January', '2025-February', '2025-March', '2025-April', 
+               '2025-May', '2025-June']
+
+# Set correct order for plotting/sorting
+claim_trend['YearMonth'] = pd.Categorical(claim_trend['YearMonth'], categories=month_order, ordered=True)
+
+# Sort by YearMonth and ClaimType for accurate diff calculation
+claim_trend = claim_trend.sort_values(['ClaimType', 'YearMonth'])
+
+# Calculate percentage change
+claim_trend['PercentChange'] = claim_trend.groupby('ClaimType')['ClaimCount'].pct_change() * 100
+
+# Optional: Round the percentage change
+claim_trend['PercentChange'] = claim_trend['PercentChange'].round(2)
+
+# Display the DataFrame
+print(claim_trend.head(15))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import plotly.express as px
 import pandas as pd
 
