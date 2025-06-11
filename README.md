@@ -1,3 +1,34 @@
+from dateutil.relativedelta import relativedelta
+from datetime import datetime
+import pandas as pd
+
+# Just to be safe, ensure DOB is in datetime format
+merged_df['DOB'] = pd.to_datetime(merged_df['DOB'], errors='coerce')
+
+# Define today's date once
+today = datetime.today()
+
+# Define a function to calculate age
+def calculate_age(dob):
+    if pd.isnull(dob):
+        return None
+    # Convert pandas Timestamp to Python datetime
+    dob = dob.to_pydatetime()
+    return relativedelta(today, dob).years
+
+# Apply the function to calculate Age
+merged_df['Age'] = merged_df['DOB'].apply(calculate_age)
+
+# View result
+print(merged_df[['DOB', 'Age']].head())
+
+
+
+
+
+
+
+
 import pandas as pd
 from datetime import datetime
 
