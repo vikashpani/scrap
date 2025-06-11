@@ -1,3 +1,26 @@
+import pandas as pd
+from datetime import datetime
+
+# Assuming your DataFrame is called merged_df and it has a 'DOB' column
+
+# Make sure 'DOB' column is in datetime format
+merged_df['DOB'] = pd.to_datetime(merged_df['DOB'], errors='coerce')
+
+# Calculate age
+today = pd.to_datetime('today')
+merged_df['Age'] = (today - merged_df['DOB']).astype('<m8[Y]').astype(int)
+
+# View result
+print(merged_df[['DOB', 'Age']].head())
+
+
+
+
+
+
+
+
+
 if not common_cols:
     st.error("🚫 No common columns found between Member and Claim data. Cannot proceed with merging.")
 else:
