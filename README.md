@@ -1,3 +1,24 @@
+claim_types = claim_trend['ClaimType'].unique()
+color_map = {ct: px.colors.qualitative.Plotly[i % len(px.colors.qualitative.Plotly)] for i, ct in enumerate(claim_types)}
+
+# Plot with consistent color mapping
+fig = px.bar(
+    claim_trend,
+    x="YearMonth",
+    y="ClaimCount",
+    color="ClaimType",
+    color_discrete_map=color_map,
+    barmode="group",
+    title="Monthly Claim Trends"
+)
+
+
+
+
+
+
+
+
 # Ensure your merged_df has the 'YearMonth' column properly formatted
 merged_df['ServDate'] = pd.to_datetime(merged_df['ServDate'])
 merged_df['YearMonth'] = merged_df['ServDate'].dt.strftime('%Y-%B')
