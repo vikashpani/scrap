@@ -1,3 +1,51 @@
+# Ensure your merged_df has the 'YearMonth' column properly formatted
+merged_df['ServDate'] = pd.to_datetime(merged_df['ServDate'])
+merged_df['YearMonth'] = merged_df['ServDate'].dt.strftime('%Y-%B')
+
+# Step 1: Sort and calculate percentage change (already assumed to be done)
+# claim_trend has columns: ['YearMonth', 'ClaimType', 'ClaimCount', 'PercentChange']
+
+# Step 2: Filter for percentage drop below -20%
+significant_drop = claim_trend[claim_trend['PercentChange'] < -20]
+
+# Step 3: Get all claims from current and previous month for that ClaimType
+all_records = []
+
+for _, row in significant_drop.iterrows():
+    curr_ym = row['YearMonth']
+    claim_type = row['ClaimType']
+    
+    # Get index of current month in order list
+    idx = month_order.index(curr_ym)
+    
+    if idx == 0:
+        continue  # No previous month to compare
+    
+    prev_ym = month_order[idx - 1]
+
+    # Filter merged_df for both months and claim type
+    relevant_claims = merged_df[
+        (merged_df['ClaimType'] == claim_type) &
+        (merged_df['YearMonth'].isin([prev_ym, curr_ym]))
+    ][['YearMonth', 'ClaimType', 'ClaimID', 'ServCode', 'RevenueCode', 'DiagCode', 'Provider']]
+    
+    all_records.append(relevant_claims)
+
+# Step 4: Concatenate all results into one DataFrame
+final_claims_df = pd.concat(all_records, ignore_index=True)
+
+# Display or export final_claims_df
+print(final_claims_df)
+
+
+
+
+
+
+
+
+
+
 import pandas as pd
 
 # Ensure date is in datetime format
