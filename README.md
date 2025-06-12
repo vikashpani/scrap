@@ -1,3 +1,16 @@
+unique_claims = claim_trend['ClaimType'].unique()
+palette = px.colors.qualitative.Dark24 + px.colors.qualitative.Light24 + px.colors.qualitative.Plotly
+
+color_map = {claim: palette[i % len(palette)] for i, claim in enumerate(unique_claims)}
+
+
+
+
+
+
+
+
+
 claim_types = claim_trend['ClaimType'].unique()
 color_map = {ct: px.colors.qualitative.Plotly[i % len(px.colors.qualitative.Plotly)] for i, ct in enumerate(claim_types)}
 
