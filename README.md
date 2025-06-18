@@ -1,3 +1,67 @@
+
+import pandas as pd
+
+# Step 0: Define valid ClaimTypes and filter
+valid_claim_types = ['Institutional Inpatient', 'Institutional Outpatient', 'Professional']
+filtered_df = merged_df[merged_df['ClaimType'].isin(valid_claim_types)]
+
+# Step 1: Get top 10 diagnosis codes from filtered data
+top_10_diag = filtered_df['DiagCode'].value_counts().nlargest(10).index
+
+# Container for selected rows
+selected_rows = []
+
+# Step 2: Loop through each top diagnosis code
+for diag in top_10_diag:
+    diag_subset = filtered_df[filtered_df['DiagCode'] == diag]
+    
+    # Top 3 service codes and top 3 providers for this diagnosis
+    top_3_serv = diag_subset['ServCode'].value_counts().nlargest(3).index
+    top_3_prov = diag_subset['Provider'].value_counts().nlargest(3).index
+
+    # Get top 3 rows for each ServCode
+    for serv in top_3_serv:
+        temp = diag_subset[diag_subset['ServCode'] == serv].head(3)
+        selected_rows.append(temp)
+    
+    # Get top 3 rows for each Provider
+    for prov in top_3_prov:
+        temp = diag_subset[diag_subset['Provider'] == prov].head(3)
+        selected_rows.append(temp)
+
+# Step 3: Add Top 3 high-dollar claims from each ClaimType
+top_amount_claims = (
+    filtered_df.sort_values('AmountPaid', ascending=False)
+    .groupby('ClaimType')
+    .head(3)
+)
+selected_rows.append(top_amount_claims)
+
+# Step 4: Add Top 3 claims by summary stats (optional: based on highest AmountPaid)
+top_stats_claims = (
+    filtered_df.groupby('ClaimType', group_keys=False)
+    .apply(lambda x: x.sort_values('AmountPaid', ascending=False).head(3))
+)
+selected_rows.append(top_stats_claims)
+
+# Step 5: Combine all collected rows
+final_df = pd.concat(selected_rows).drop_duplicates().reset_index(drop=True)
+
+# Step 6: Export or preview
+final_df.to_excel('Filtered_TopClaims_By_Diag_Service_Provider_Pay.xlsx', index=False)
+
+print("✅ Final Data Preview:")
+print(final_df.head(10))
+
+
+
+
+
+
+
+
+
+
 import pandas as pd
 
 # Step 1: Get top 10 diagnosis codes
