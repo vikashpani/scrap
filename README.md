@@ -1,3 +1,51 @@
+import pandas as pd
+
+# Step 0: Define relevant claim types
+claim_types = ['Institutional Inpatient', 'Institutional Outpatient', 'Professional']
+selected_rows = []
+
+# Step 1: Loop through each claim type
+for claim_type in claim_types:
+    ct_df = merged_df[merged_df['ClaimType'] == claim_type]
+    
+    # Step 2: Get top 10 diagnosis codes for this claim type
+    top_10_diag = ct_df['DiagCode'].value_counts().nlargest(10).index
+    
+    for diag in top_10_diag:
+        diag_subset = ct_df[ct_df['DiagCode'] == diag]
+        
+        # Top 3 service codes and providers for this diag within claim type
+        top_3_serv = diag_subset['ServCode'].value_counts().nlargest(3).index
+        top_3_prov = diag_subset['Provider'].value_counts().nlargest(3).index
+        
+        # Get top 3 rows per service code
+        for serv in top_3_serv:
+            temp = diag_subset[diag_subset['ServCode'] == serv].head(3)
+            selected_rows.append(temp)
+        
+        # Get top 3 rows per provider
+        for prov in top_3_prov:
+            temp = diag_subset[diag_subset['Provider'] == prov].head(3)
+            selected_rows.append(temp)
+
+    # Step 3: Add top 3 high-dollar claims from this claim type
+    top_amount_claims = ct_df.sort_values('AmountPaid', ascending=False).head(3)
+    selected_rows.append(top_amount_claims)
+
+# Step 4: Combine everything
+final_df = pd.concat(selected_rows).drop_duplicates().reset_index(drop=True)
+
+# Step 5: Export or print
+final_df.to_excel('ClaimTypeWise_TopClaims.xlsx', index=False)
+
+print("✅ Final Data Preview:")
+print(final_df.head(10))
+
+
+
+
+
+
 
 import pandas as pd
 
