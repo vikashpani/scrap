@@ -1,5 +1,47 @@
 import pandas as pd
 
+# Step 1: Get top 10 diagnosis codes
+top_10_diag = merged_df['DiagCode'].value_counts().nlargest(10).index
+
+# Final result container
+all_selected_rows = []
+
+# Step 2: For each diagnosis code
+for diag in top_10_diag:
+    diag_subset = merged_df[merged_df['DiagCode'] == diag]
+    
+    # Top 3 service codes and providers for that diagnosis
+    top_serv = diag_subset['ServCode'].value_counts().nlargest(3).index
+    top_prov = diag_subset['Provider'].value_counts().nlargest(3).index
+
+    # For each top service code → get top 3 rows
+    for serv in top_serv:
+        top_rows_serv = diag_subset[diag_subset['ServCode'] == serv].head(3)
+        all_selected_rows.append(top_rows_serv)
+
+    # For each top provider → get top 3 rows
+    for prov in top_prov:
+        top_rows_prov = diag_subset[diag_subset['Provider'] == prov].head(3)
+        all_selected_rows.append(top_rows_prov)
+
+# Step 3: Combine and remove duplicates
+final_df = pd.concat(all_selected_rows).drop_duplicates().reset_index(drop=True)
+
+# Step 4: Optional — Export to Excel
+final_df.to_excel('TopDiag_ServiceProvider_LimitedRows.xlsx', index=False)
+
+# Preview
+print(final_df.head())
+
+
+
+
+
+
+
+
+import pandas as pd
+
 # Step 1: Get Top 10 DiagCodes
 top_10_diag = merged_df['DiagCode'].value_counts().nlargest(10).index
 
