@@ -1,4 +1,52 @@
 import pandas as pd
+from openpyxl import load_workbook
+
+# Step 1: Load the source Excel
+file_path = 'your_file.xlsx'
+sheet1_df = pd.read_excel(file_path, sheet_name='Sheet1')
+
+# Step 2: Copy column structure for the new sheet
+prd_sample_df = pd.DataFrame(columns=sheet1_df.columns)
+
+# Step 3: Apply transformations to a temporary copy
+temp_df = sheet1_df.copy()
+
+# Format Correction: Fix ClaimType
+temp_df['ClaimType'] = temp_df['ClaimType'].replace({
+    'Institutional Inpatient': 'Institutional',
+    'Institutional Outpatient': 'Institutional'
+})
+
+# Format Correction: Fix POS (prefix 00)
+temp_df['POS'] = temp_df['POS'].apply(lambda x: f"{int(x):04}" if pd.notnull(x) else x)
+
+# Step 4: Define your column mapping (from Sheet1 → prd_sample)
+column_mapping = {
+    'ClaimType': 'ClaimType',
+    'POS': 'POS'
+}
+
+# Step 5: Populate values into prd_sample_df using the mapping
+for src_col, target_col in column_mapping.items():
+    if src_col in temp_df.columns and target_col in prd_sample_df.columns:
+        prd_sample_df[target_col] = temp_df[src_col]
+
+# Step 6: Write both sheets into a new Excel file
+with pd.ExcelWriter('updated_output.xlsx', engine='openpyxl', mode='w') as writer:
+    sheet1_df.to_excel(writer, sheet_name='Sheet1', index=False)
+    prd_sample_df.to_excel(writer, sheet_name='prd_sample', index=False)
+
+print("✅ Sheet 'prd_sample' created and updated successfully.")
+
+
+
+
+
+
+
+
+
+import pandas as pd
 
 # Step 1: Load the Excel file
 file_path = 'your_file.xlsx'
