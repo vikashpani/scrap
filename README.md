@@ -1,5 +1,56 @@
 import pandas as pd
 
+# Step 1: Load the Excel file
+file_path = 'your_file.xlsx'
+
+# Read both sheets
+sheet1_df = pd.read_excel(file_path, sheet_name='Sheet1')
+sheet2_df = pd.read_excel(file_path, sheet_name='Sheet2')
+
+# Step 2: Define column mapping from Sheet1 to Sheet2
+column_mapping = {
+    'ClaimType': 'ClaimTypeMapped',  # e.g., Sheet1["ClaimType"] → Sheet2["ClaimTypeMapped"]
+    'POS': 'POSMapped'
+}
+
+# Step 3: Apply transformations before mapping
+
+# Fix ClaimType: Institutional Inpatient → Institutional
+sheet1_df['ClaimType'] = sheet1_df['ClaimType'].replace({
+    'Institutional Inpatient': 'Institutional',
+    'Institutional Outpatient': 'Institutional'  # Optional: group both
+})
+
+# Fix POS: if value is numeric 31, make it string and prefix 00 → "0031"
+sheet1_df['POS'] = sheet1_df['POS'].apply(lambda x: f"{int(x):04}" if pd.notnull(x) else x)
+
+# Step 4: Copy mapped columns from Sheet1 to Sheet2
+for src_col, target_col in column_mapping.items():
+    if src_col in sheet1_df.columns and target_col in sheet2_df.columns:
+        sheet2_df[target_col] = sheet1_df[src_col]
+    else:
+        print(f"⚠️ Column not found: {src_col} or {target_col}")
+
+# Step 5: Save the updated Excel with both sheets
+with pd.ExcelWriter('updated_output.xlsx', engine='openpyxl', mode='w') as writer:
+    sheet1_df.to_excel(writer, sheet_name='Sheet1', index=False)
+    sheet2_df.to_excel(writer, sheet_name='Sheet2', index=False)
+
+print("✅ Excel updated with mapped columns and corrected values.")
+
+
+
+
+
+
+
+
+
+
+
+
+import pandas as pd
+
 # Step 0: Define relevant claim types
 claim_types = ['Institutional Inpatient', 'Institutional Outpatient', 'Professional']
 selected_rows = []
