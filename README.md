@@ -1,3 +1,64 @@
+ChatGPT
+Saved memory full
+You said:
+This is my resume i need to answer about me in 900 characters
+
+● 4 years of experience in Deep learning, Computer vision and Image processing software design 
+and development for desktop and embedded environments
+▶ Experience in structural and object-oriented programming.
+▶ Experience in Supervised and Un-Supervised Learning.
+▶ Experience in working with ARMNN, Snapdragon, Advantech, Intel NUC, neural compute stick,
+Thermal sensor with Raspberry-pi.
+▶ Experience in RAG with LLM’s and using opensource models.
+▶ Experience with AWS, Azure and few other popular API based LLM invoke Mechanisms.
+▶ Having knowledge on Generative AI, Active Learning, Knowledge Distillation, Pruning, Hierarchal
+learning, NLP and Curriculum Learning.
+▶ Experience in porting the Deep learning models to light weight platforms. (Micro
+Processors/Micro Controllers)
+▶ Experience in Data Clustering Techniques.
+▶ Experience with Lidar data for object detection and classification along with lane segmentation.
+▶ Experience with Medical Imaging like cell classification, x-ray enhancement, cell segmentation.
+▶ Having Knowledge on DETR where Transformers can be used for detecting objects in an image.
+Also other architectures like HDRNET, R2CNN.
+▶ Experience in developing image processing algorithms in python, Matlab(beginner).
+▶ Experience in developing computer vision solutions using OpenCV,Scikit-image, Matplotlib.
+▶ Design and develop deep learning algorithms using Keras, Tensorflow, TF-Lite, Pytorch,OPENVINO
+▶ Experience in developing deep learning application for object detection using YOLO, RESNET,
+Mobilenet, Squeezenet, Peleenet and custom designed DL Model and so on.
+▶ Experience in using Segmentation architectures like U-Net,E-net,ResUnet.
+▶ Experience in using LLAMA, GPT and other LLM models through fastchat and RAG enabling
+seamless communication with PDF and other documentations.
+▶ Experience in Object Tracking and Monitoring and worked on Homograph for multiple cameras
+feed.
+▶ Experience with FFMPEG, Gstreamer, Yocto Linux platforms.
+▶ Experience in developing deep learning application for person reidentification using siamese
+neural networks.
+▶ Experience in developing deep learning application for single shot object recognition using AI
+model trained using triplet loss.
+▶ Experience in developing deep learning application for sequential data using LSTM(RNNS),
+Transformers.
+▶ Experience in using Auto encoders for identification of defects in the image.
+▶ Knowledge of using GANs for semantic segmentation and also had experiencing in rewriting GAN
+for novelty features.
+▶ Experience in using Multi task loss and Active learning for improving the accuracy of Deep
+ChatGPT said:
+Here is a concise and impactful "About Me" response within 900 characters, based on your resume:
+
+I’m a Deep Learning and Computer Vision Engineer with 4 years of experience building and deploying AI solutions across embedded, desktop, and cloud platforms. I specialize in model optimization and porting DL models to edge devices like ARMNN, Intel NUC, and Raspberry Pi. I’ve worked extensively with YOLO, U-Net, ResNet, and transformers like DETR for object detection, segmentation, and classification—including Lidar and medical imaging use cases. I have hands-on experience with LLMs and RAG pipelines using open-source models, FastChat, AWS, and Azure. My strengths include Generative AI, Active Learning, and real-time video analytics using FFMPEG/GStreamer. I bring a strong foundation in both traditional image processing and deep learning, with a focus on efficient, scalable AI applications.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import pandas as pd
 from openpyxl import load_workbook
 
