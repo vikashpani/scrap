@@ -1,4 +1,37 @@
 import pyodbc
+import pandas as pd
+
+# Define connection
+conn = pyodbc.connect(
+    'DRIVER={ODBC Driver 17 for SQL Server};'
+    'SERVER=172.28.196.3,1433;'
+    'DATABASE=PowerSTEPP;'
+    'Trusted_Connection=yes;'
+)
+
+# Table to export
+table_name = 'dbo.Employees'  # Replace with your actual table name
+
+# Read entire table into DataFrame
+query = f"SELECT * FROM {table_name}"
+df = pd.read_sql(query, conn)
+
+# Export to Excel
+output_path = 'employees_data.xlsx'  # Change file name/path as needed
+df.to_excel(output_path, index=False)
+
+print(f"✅ Data exported to Excel: {output_path}")
+
+conn.close()
+
+
+
+
+
+
+
+
+import pyodbc
 
 conn = pyodbc.connect(
     'DRIVER={ODBC Driver 17 for SQL Server};'
