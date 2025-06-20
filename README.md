@@ -1,3 +1,60 @@
+import os
+from glob import glob
+from itertools import zip_longest
+
+# 🔁 Replace with your actual parser function
+def parse_multiple_xml_etree(file_path):
+    # This is just a placeholder
+    return [
+        ({
+            'ClaimID': ['001'], 
+            'PatientName': ['John Doe']
+        }, ['ClaimID', 'PatientName'])
+    ]
+
+# 📁 Folder containing XML files
+folder_path = r'C:\path\to\xml\folder'  # <-- change this
+output_file = 'merged_output.txt'
+
+all_data_rows = []
+header_written = False
+final_columns = []
+
+# 🔁 Process each XML file
+for file_path in glob(os.path.join(folder_path, "*.xml")):
+    print(f"📄 Parsing: {os.path.basename(file_path)}")
+    
+    parsed_rows = parse_multiple_xml_etree(file_path)
+    
+    for result, tag_order in parsed_rows:
+        if not header_written:
+            final_columns = tag_order
+            header_written = True
+        
+        # Prepare rows (aligned by columns)
+        max_len = max((len(v) for v in result.values()), default=1)
+        row_data = {col: result.get(col, [""] * max_len) for col in final_columns}
+        rows = list(zip_longest(*[row_data[col] for col in final_columns], fillvalue=""))
+        all_data_rows.extend(rows)
+
+# 📝 Write to text file (tab-separated)
+with open(output_file, 'w', encoding='utf-8') as f:
+    f.write('\t'.join(final_columns) + '\n')
+    for row in all_data_rows:
+        f.write('\t'.join(str(val) for val in row) + '\n')
+
+print(f"\n✅ All XML data merged and written to: {output_file}")
+
+
+
+
+
+
+
+
+
+
+
 import pyodbc
 import pandas as pd
 
