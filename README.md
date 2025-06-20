@@ -1,3 +1,31 @@
+import pyodbc
+
+# Define connection string
+conn = pyodbc.connect(
+    'DRIVER={ODBC Driver 17 for SQL Server};'
+    'SERVER=MHP01HEALTHEDG;'
+    'DATABASE=your_database_name;'
+    'UID=your_username;'
+    'PWD=your_password'
+)
+
+cursor = conn.cursor()
+cursor.execute("SELECT name FROM sys.databases")
+
+for row in cursor.fetchall():
+    print("📁", row[0])
+
+conn.close()
+
+
+
+
+
+
+
+
+
+
 ChatGPT
 Saved memory full
 You said:
