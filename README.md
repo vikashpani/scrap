@@ -1,5 +1,37 @@
 import pyodbc
 
+conn = pyodbc.connect(
+    'DRIVER={ODBC Driver 17 for SQL Server};'
+    'SERVER=172.28.196.3,1433;'
+    'DATABASE=PowerSTEPP;'
+    'Trusted_Connection=yes;'
+)
+
+cursor = conn.cursor()
+
+# Get all table names
+cursor.execute("""
+    SELECT TABLE_SCHEMA, TABLE_NAME 
+    FROM INFORMATION_SCHEMA.TABLES 
+    WHERE TABLE_TYPE = 'BASE TABLE'
+""")
+
+print("📋 Tables in PowerSTEPP database:")
+for row in cursor.fetchall():
+    print(f"{row.TABLE_SCHEMA}.{row.TABLE_NAME}")
+
+cursor.close()
+conn.close()
+
+
+
+
+
+
+
+
+import pyodbc
+
 # Define connection string
 conn = pyodbc.connect(
     'DRIVER={ODBC Driver 17 for SQL Server};'
