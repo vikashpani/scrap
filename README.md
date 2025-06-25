@@ -1,3 +1,656 @@
+ChatGPT
+Saved memory full
+You said:
+I have two excels with few fields I will give column mapping dictionary needs to compare those fields the data is correct or not if not store it in seperate excel file with entire row expected and actual. In two files one is comes from db it contains every thing one more is manually that needs to compare with db one iterate through each row and checks in db file
+ChatGPT said:
+You can accomplish this task in Python using pandas. Here’s a step-by-step guide:
+
+✅ Problem Breakdown
+You have:
+
+A DB Excel file (db_file.xlsx) — ground truth.
+
+A Manual Excel file (manual_file.xlsx) — to be compared.
+
+A column mapping dictionary — mapping manual column names to DB column names.
+
+You want:
+
+To compare rows from the manual file against the DB file using the mapped columns.
+
+Store mismatched rows in an output Excel file, showing both expected (from DB) and actual (from manual).
+
+🛠️ Code Template
+import pandas as pd
+
+# Input files and config
+db_file = "db_file.xlsx"
+manual_file = "manual_file.xlsx"
+output_file = "comparison_result.xlsx"
+
+# Sheet names (optional if you want default sheet)
+db_sheet = "Sheet1"
+manual_sheet = "Sheet1"
+
+# Mapping: manual_col -> db_col
+column_mapping = {
+    "Manual_Name": "DB_Name",
+    "Manual_ID": "DB_ID",
+    "Manual_Date": "DB_Date"
+}
+
+# Load files
+df_db = pd.read_excel(db_file, sheet_name=db_sheet)
+df_manual = pd.read_excel(manual_file, sheet_name=manual_sheet)
+
+# Convert mapping into two lists
+manual_cols = list(column_mapping.keys())
+db_cols = [column_mapping[col] for col in manual_cols]
+
+# Store mismatches
+mismatches = []
+
+# Iterate each row in manual file
+for idx, manual_row in df_manual.iterrows():
+    # Try to find matching row in DB based on unique identifier or all fields
+    matches = df_db.copy()
+    
+    for m_col, d_col in column_mapping.items():
+        matches = matches[matches[d_col] == manual_row[m_col]]
+
+    if matches.empty:
+        # No match found
+        mismatches.append({
+            "RowIndex": idx,
+            "Status": "Not Found in DB",
+            "Manual_Row": manual_row.to_dict(),
+            "Expected_DB_Row": None
+        })
+    else:
+        # Found potential match, compare field by field
+        db_row = matches.iloc[0]
+        mismatch_found = False
+        for m_col, d_col in column_mapping.items():
+            if pd.isnull(manual_row[m_col]) and pd.isnull(db_row[d_col]):
+                continue
+            elif manual_row[m_col] != db_row[d_col]:
+                mismatch_found = True
+                break
+        if mismatch_found:
+            mismatches.append({
+                "RowIndex": idx,
+                "Status": "Mismatch",
+                "Manual_Row": manual_row.to_dict(),
+                "Expected_DB_Row": db_row.to_dict()
+            })
+
+# Create a flat dataframe from mismatches
+records = []
+for item in mismatches:
+    row = {
+        "RowIndex": item["RowIndex"],
+        "Status": item["Status"]
+    }
+    # Flatten the fields
+    for k, v in (item["Manual_Row"] or {}).items():
+        row[f"Manual_{k}"] = v
+    for k, v in (item["Expected_DB_Row"] or {}).items():
+        row[f"Expected_{k}"] = v
+    records.append(row)
+
+# Save to Excel
+output_df = pd.DataFrame(records)
+output_df.to_excel(output_file, index=False)
+print(f"Comparison completed. Mismatches saved to: {output_file}")
+📌 Notes:
+This assumes you want exact match. If fuzzy matching or tolerance (e.g., for floats or dates) is required, it can be extended.
+
+If no unique identifier is available, the matching is done row-by-row which may be inefficient for large files.
+
+You can customize the Status column for better logging: Not Found, Mismatch, Match.
+
+🔄 Example Column Mapping
+column_mapping = {
+    "Employee_ID": "EmpID",
+    "Joining_Date": "StartDate",
+    "Name": "FullName"
+}
+Would you like this as a ready-to-run script with a GUI (e.g., Streamlit), or is CLI-based okay? Also, do the manual and DB sheets have unique keys (like ID) to match on more precisely?
+
+You said:
+Give me streamlit
+ChatGPT said:
+Here’s a Streamlit app that:
+
+Accepts two Excel files: one from the Database and one Manual entry.
+
+Accepts a column mapping JSON (from Manual → DB).
+
+Compares values row-by-row using the mapping.
+
+Exports mismatches with full rows (manual + expected from DB) to a downloadable Excel file.
+
+✅ Features:
+File upload UI
+
+JSON input for column mapping
+
+Mismatch summary
+
+Download link for mismatches
+
+📦 Requirements
+Install required packages if you haven’t:
+
+pip install streamlit pandas openpyxl
+🖥️ app.py
+import streamlit as st
+import pandas as pd
+import json
+from io import BytesIO
+
+st.title("Excel Data Validator: Manual vs DB")
+
+# Upload Excel files
+manual_file = st.file_uploader("Upload Manual Excel File", type=["xlsx"])
+db_file = st.file_uploader("Upload DB Excel File", type=["xlsx"])
+
+# Column Mapping Input
+col_map_input = st.text_area("Enter Column Mapping (Manual → DB) as JSON", height=200,
+                             placeholder='e.g. {\n  "Manual_ID": "DB_ID",\n  "Manual_Name": "DB_Name"\n}')
+
+if st.button("Compare Data"):
+    if not manual_file or not db_file or not col_map_input:
+        st.error("Please upload both Excel files and provide column mapping.")
+    else:
+        try:
+            col_mapping = json.loads(col_map_input)
+            manual_cols = list(col_mapping.keys())
+            db_cols = [col_mapping[k] for k in manual_cols]
+
+            df_manual = pd.read_excel(manual_file)
+            df_db = pd.read_excel(db_file)
+
+            mismatches = []
+
+            for idx, manual_row in df_manual.iterrows():
+                matches = df_db.copy()
+                for m_col, d_col in col_mapping.items():
+                    matches = matches[matches[d_col] == manual_row[m_col]]
+
+                if matches.empty:
+                    mismatches.append({
+                        "RowIndex": idx,
+                        "Status": "Not Found in DB",
+                        "Manual_Row": manual_row.to_dict(),
+                        "Expected_DB_Row": None
+                    })
+                else:
+                    db_row = matches.iloc[0]
+                    mismatch_found = False
+                    for m_col, d_col in col_mapping.items():
+                        if pd.isnull(manual_row[m_col]) and pd.isnull(db_row[d_col]):
+                            continue
+                        elif manual_row[m_col] != db_row[d_col]:
+                            mismatch_found = True
+                            break
+                    if mismatch_found:
+                        mismatches.append({
+                            "RowIndex": idx,
+                            "Status": "Mismatch",
+                            "Manual_Row": manual_row.to_dict(),
+                            "Expected_DB_Row": db_row.to_dict()
+                        })
+
+            if mismatches:
+                records = []
+                for item in mismatches:
+                    row = {
+                        "RowIndex": item["RowIndex"],
+                        "Status": item["Status"]
+                    }
+                    for k, v in (item["Manual_Row"] or {}).items():
+                        row[f"Manual_{k}"] = v
+                    for k, v in (item["Expected_DB_Row"] or {}).items():
+                        row[f"Expected_{k}"] = v
+                    records.append(row)
+
+                result_df = pd.DataFrame(records)
+
+                st.warning(f"{len(result_df)} mismatches found.")
+
+                @st.cache_data
+                def to_excel(df):
+                    output = BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df.to_excel(writer, index=False, sheet_name='MismatchReport')
+                    return output.getvalue()
+
+                excel_bytes = to_excel(result_df)
+                st.download_button(
+                    label="📥 Download Mismatch Report",
+                    data=excel_bytes,
+                    file_name="Mismatch_Report.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+                st.dataframe(result_df.head(10))
+
+            else:
+                st.success("✅ All rows matched successfully!")
+
+        except Exception as e:
+            st.exception(e)
+🧪 Example Column Mapping to Paste in Textbox
+{
+  "Manual_ID": "DB_ID",
+  "Manual_Name": "DB_Name",
+  "Manual_JoiningDate": "DB_JoiningDate"
+}
+🚀 Run the App
+streamlit run app.py
+Let me know if:
+
+You want to match on a unique key only (e.g., ID first, then check others)?
+
+Need fuzzy matching (e.g., ignore case or small date format mismatches)?
+
+You’d like to allow CSV inputs too?
+
+You said:
+No matching found I am getting
+for m_col, d_col in column_mapping.items():
+        matches = matches[matches[d_col] == manual_row[m_col]]
+ChatGPT said:
+Thanks — the issue is likely due to strict equality checks, which fail when:
+
+Data types differ (int vs str, datetime vs str, etc.).
+
+Whitespace, case, or formatting differ (e.g., "123 " vs "123", or "abc" vs "ABC").
+
+One of the values is NaN.
+
+✅ Fix: Normalize Before Comparison
+You can cast both sides to string, strip spaces, and lowercase if needed before filtering.
+
+Here’s how to fix that specific line:
+
+🔧 Replace This:
+for m_col, d_col in column_mapping.items():
+    matches = matches[matches[d_col] == manual_row[m_col]]
+✅ With This (safer, normalized comparison):
+for m_col, d_col in column_mapping.items():
+    manual_val = str(manual_row[m_col]).strip().lower() if pd.notnull(manual_row[m_col]) else ""
+    matches = matches[
+        matches[d_col].astype(str).str.strip().str.lower() == manual_val
+    ]
+🧠 Why This Works:
+Converts both manual and DB values to strings.
+
+Strips whitespace.
+
+Converts to lowercase for case-insensitive match.
+
+Handles NaN gracefully.
+
+📝 Optional: Apply to Specific Fields Only
+If some fields (e.g., dates or numbers) need stricter checks, let me know — we can handle those separately.
+
+Would you like me to patch this into the full Streamlit code from earlier?
+
+You said:
+1 CLAIM HCC ID
+
+IS_FIRST_PASS_AUTO_ADJUDICATE
+
+IS_ADJUSTI
+
+CLAIM_STATI
+
+F
+
+G
+
+Actual Error Message
+
+2 '2025169001147
+
+Y
+
+-Claim Type-
+
+N
+
+3 '2025169001148
+
+Y
+
+N
+
+Denied
+
+Final
+
+1. Please Use Appropriate Medicare Code
+
+Professional
+
+Professional
+
+This is my data
+ChatGPT said:
+Thank you — that sample helps a lot. Let’s break this down and solve the issue you're facing with no match found, using your data structure and the goal.
+
+🧾 Sample Manual Data You Gave (Tabular View)
+CLAIM HCC ID	IS_FIRST_PASS_AUTO_ADJUDICATE	IS_ADJUSTI	CLAIM_STATI	F	G	Actual Error Message
+'2025169001147	Y	-Claim Type-	N			
+'2025169001148	Y	N	Denied	Final	Professional	Please Use Appropriate Medicare Code
+🧩 Assumption
+Manual data columns like "CLAIM HCC ID" map to DB columns (e.g., "CLAIM_ID").
+
+The apostrophe (') in IDs is common when exported from Excel — must be stripped.
+
+Matching should ignore case, whitespace, and treat strings consistently.
+
+✅ Fix: Robust Normalized Comparison
+Update your Streamlit logic to normalize values before comparison:
+
+🔄 Replace Comparison Block (Full Update for Streamlit)
+for m_col, d_col in col_mapping.items():
+    manual_val = manual_row.get(m_col)
+
+    if pd.isnull(manual_val):
+        manual_val = ""
+    else:
+        manual_val = str(manual_val).strip().strip("'").lower()  # strip apostrophe too
+
+    # Normalize DB column as string
+    matches = matches[
+        matches[d_col]
+        .astype(str)
+        .str.strip()
+        .str.strip("'")  # strip leading apostrophes
+        .str.lower()
+        == manual_val
+    ]
+🧠 What This Handles:
+'2025169001147 → 2025169001147 (apostrophe removed)
+
+" Y " → "y" (strip + lowercase)
+
+"Claim Type" vs "Professional" case handled
+
+Avoids .loc[] or type mismatch errors
+
+✅ Also Suggested:
+If the CLAIM HCC ID is unique, match only on that, and then compare other columns one by one.
+
+# Match by CLAIM ID only
+manual_claim_id = str(manual_row["CLAIM HCC ID"]).strip().strip("'").lower()
+matches = df_db[
+    df_db["CLAIM_ID"].astype(str).str.strip().str.strip("'").str.lower() == manual_claim_id
+]
+Then compare other fields (IS_ADJUSTI, etc.) after match.
+
+🧪 Want me to give you the updated full Streamlit code with this fixed and sample data columns added?
+Let me know, and I’ll plug in the field names directly.
+
+You said:
+Give me full code properly
+ChatGPT said:
+Here is the complete Streamlit app that compares a manual Excel sheet against a DB Excel file, using a column mapping. It applies robust matching logic (handling apostrophes, whitespace, case mismatches) and exports mismatches into a downloadable Excel file.
+
+✅ Streamlit App: compare_excel_app.py
+import streamlit as st
+import pandas as pd
+import json
+from io import BytesIO
+
+st.title("📊 Excel Comparator: Manual vs DB")
+
+# Upload Excel files
+manual_file = st.file_uploader("Upload Manual Excel File", type=["xlsx"])
+db_file = st.file_uploader("Upload DB Excel File", type=["xlsx"])
+
+# Sample default mapping
+default_mapping = """{
+  "CLAIM HCC ID": "CLAIM_ID",
+  "IS_FIRST_PASS_AUTO_ADJUDICATE": "IS_FIRST_PASS_AUTO_ADJUDICATE",
+  "IS_ADJUSTI": "IS_ADJUSTI",
+  "CLAIM_STATI": "CLAIM_STATI",
+  "F": "F",
+  "G": "G",
+  "Actual Error Message": "Actual Error Message"
+}"""
+
+# Column Mapping Input
+col_map_input = st.text_area("Enter Column Mapping (Manual → DB) as JSON", value=default_mapping, height=250)
+
+if st.button("🔍 Compare"):
+    if not manual_file or not db_file or not col_map_input:
+        st.error("Please upload both Excel files and provide column mapping.")
+    else:
+        try:
+            # Load column mapping
+            col_mapping = json.loads(col_map_input)
+            manual_cols = list(col_mapping.keys())
+            db_cols = list(col_mapping.values())
+
+            # Load data
+            df_manual = pd.read_excel(manual_file)
+            df_db = pd.read_excel(db_file)
+
+            # Ensure string format and strip unwanted characters
+            def normalize(val):
+                if pd.isnull(val):
+                    return ""
+                return str(val).strip().strip("'").lower()
+
+            mismatches = []
+
+            for idx, manual_row in df_manual.iterrows():
+                # Match using CLAIM HCC ID (assuming it's unique)
+                claim_id_col_manual = "CLAIM HCC ID"
+                claim_id_col_db = col_mapping[claim_id_col_manual]
+
+                manual_claim_id = normalize(manual_row[claim_id_col_manual])
+                candidate_matches = df_db[
+                    df_db[claim_id_col_db]
+                    .astype(str)
+                    .str.strip()
+                    .str.strip("'")
+                    .str.lower()
+                    == manual_claim_id
+                ]
+
+                if candidate_matches.empty:
+                    mismatches.append({
+                        "RowIndex": idx,
+                        "Status": "❌ Not Found in DB",
+                        "Manual_Row": manual_row.to_dict(),
+                        "Expected_DB_Row": None
+                    })
+                else:
+                    db_row = candidate_matches.iloc[0]
+                    mismatch_found = False
+                    for m_col, d_col in col_mapping.items():
+                        m_val = normalize(manual_row.get(m_col))
+                        d_val = normalize(db_row.get(d_col))
+                        if m_val != d_val:
+                            mismatch_found = True
+                            break
+
+                    if mismatch_found:
+                        mismatches.append({
+                            "RowIndex": idx,
+                            "Status": "⚠️ Value Mismatch",
+                            "Manual_Row": manual_row.to_dict(),
+                            "Expected_DB_Row": db_row.to_dict()
+                        })
+
+            if mismatches:
+                records = []
+                for item in mismatches:
+                    row = {
+                        "RowIndex": item["RowIndex"],
+                        "Status": item["Status"]
+                    }
+                    for k, v in (item["Manual_Row"] or {}).items():
+                        row[f"Manual_{k}"] = v
+                    for k, v in (item["Expected_DB_Row"] or {}).items():
+                        row[f"Expected_{k}"] = v
+                    records.append(row)
+
+                result_df = pd.DataFrame(records)
+
+                st.warning(f"⚠️ {len(result_df)} mismatch(es) found.")
+
+                # Export to Excel
+                def to_excel(df):
+                    output = BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df.to_excel(writer, index=False, sheet_name="Mismatches")
+                    return output.getvalue()
+
+                excel_bytes = to_excel(result_df)
+                st.download_button(
+                    label="📥 Download Mismatch Report",
+                    data=excel_bytes,
+                    file_name="Mismatch_Report.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+                st.dataframe(result_df.head(10), use_container_width=True)
+            else:
+                st.success("✅ All rows matched successfully!")
+
+        except Exception as e:
+            st.error("An error occurred during comparison.")
+            st.exception(e)
+🚀 To Run This:
+Save the code as compare_excel_app.py
+
+Install requirements if needed:
+
+pip install streamlit pandas openpyxl
+Run:
+
+streamlit run compare_excel_app.py
+🧪 Example Excel Inputs
+manual.xlsx:
+
+Columns like "CLAIM HCC ID", "IS_ADJUSTI", etc.
+
+db.xlsx:
+
+Columns like "CLAIM_ID", "IS_ADJUSTI", etc.
+
+Just make sure the column names in the mapping match exactly (case-sensitive, unless you modify it).
+
+Would you like to extend this to support:
+
+CSV files too?
+
+Multi-match handling (same ID appears multiple times)?
+
+Custom match column (instead of hardcoded CLAIM HCC ID)?
+
+You said:
+No streamlit just give direct code
+ChatGPT said:
+Great — here’s the pure Python script (no Streamlit) that:
+
+Reads two Excel files: one manual, one from the DB.
+
+Uses a column mapping (manual_col -> db_col).
+
+Compares each row in the manual file to the DB file (based on CLAIM HCC ID).
+
+Writes mismatches into an output Excel file with full rows (actual vs expected).
+
+✅ Python Script: compare_excels.py
+import pandas as pd
+from io import BytesIO
+
+# --- Configurable Inputs ---
+manual_file = "manual.xlsx"
+db_file = "db.xlsx"
+output_file = "Mismatch_Report.xlsx"
+
+# Mapping: manual column → db column
+column_mapping = {
+    "CLAIM HCC ID": "CLAIM_ID",
+    "IS_FIRST_PASS_AUTO_ADJUDICATE": "IS_FIRST_PASS_AUTO_ADJUDICATE",
+    "IS_ADJUSTI": "IS_ADJUSTI",
+    "CLAIM_STATI": "CLAIM_STATI",
+    "F": "F",
+    "G": "G",
+    "Actual Error Message": "Actual Error Message"
+}
+
+# --- Helper function to normalize values ---
+def normalize(val):
+    if pd.isnull(val):
+        return ""
+    return str(val).strip().strip("'").lower()
+
+# --- Load data ---
+df_manual = pd.read_excel(manual_file)
+df_db = pd.read_excel(db_file)
+
+# --- Compare Logic ---
+mismatches = []
+
+for idx, manual_row in df_manual.iterrows():
+    # Normalize and lookup by CLAIM HCC ID
+    claim_id_manual_col = "CLAIM HCC ID"
+    claim_id_db_col = column_mapping[claim_id_manual_col]
+    manual_claim_id = normalize(manual_row[claim_id_manual_col])
+
+    candidates = df_db[
+        df_db[claim_id_db_col]
+        .astype(str)
+        .str.strip()
+        .str.strip("'")
+        .str.lower() == manual_claim_id
+    ]
+
+    if candidates.empty:
+        mismatches.append({
+            "RowIndex": idx,
+            "Status": "❌ Not Found in DB",
+            "Manual_Row": manual_row.to_dict(),
+            "Expected_DB_Row": None
+        })
+    else:
+        db_row = candidates.iloc[0]
+        mismatch_found = False
+        for m_col, d_col in column_mapping.items():
+            m_val = normalize(manual_row.get(m_col))
+            d_val = normalize(db_row.get(d_col))
+            if m_val != d_val:
+                mismatch_found = True
+                break
+
+        if mismatch_found:
+            mismatches.append({
+                "RowIndex": idx,
+                "Status": "⚠️ Value Mismatch",
+                "Manual_Row": manual_row.to_dict(),
+                "Expected_DB_Row": db_row.to_dict()
+            })
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import pandas as pd
 
