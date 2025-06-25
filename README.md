@@ -75,6 +75,83 @@ print(f"\n✅ Done! Output saved to: {output_file}")
 
 
 
+import os
+from glob import glob
+from itertools import zip_longest
+
+# ✅ Replace with your actual parsing function
+def parse_multiple_xml_etree(file_path):
+    """
+    Expected to return a list of (result_dict, tag_order_list) for each file.
+    Each result_dict: column → list of values
+    """
+    # Mock example:
+    return [
+        ({
+            'ClaimID': ['001', '002'],
+            'PatientName': ['John Doe', 'Jane Smith']
+        }, ['ClaimID', 'PatientName'])
+    ]
+
+# ✅ Folder with XML files
+folder_path = r"C:\path\to\xml\folder"  # <-- Change this
+output_file = "merged_output.txt"
+
+all_columns = []
+all_data_rows = []
+
+def format_cell(val):
+    val = val.strip() if isinstance(val, str) else val
+    return str(val) if val is not None else ""
+
+# 🔁 Loop through all XML files in folder
+for file_path in glob(os.path.join(folder_path, "*.xml")):
+    print(f"📄 Processing: {os.path.basename(file_path)}")
+    parsed_rows = parse_multiple_xml_etree(file_path)
+
+    for result, tag_order in parsed_rows:
+        # Track column order
+        new_cols = [col for col in tag_order if col not in all_columns]
+        all_columns.extend(new_cols)
+
+        max_len = max((len(v) for v in result.values()), default=1)
+        broadcasted = {}
+
+        for col in all_columns:
+            values = result.get(col, [])
+            if not values:
+                broadcasted[col] = [""] * max_len
+                continue
+
+            first_val = next((val for val in values if val.strip()), "")
+            filled = [val if val.strip() else first_val for val in values]
+            if len(filled) < max_len:
+                filled += [first_val] * (max_len - len(filled))
+
+            # Preserve leading zero numbers
+            filled = [f"'{val}" if isinstance(val, str) and val.isdigit() and val.startswith("0") else val for val in filled]
+            broadcasted[col] = [format_cell(val) for val in filled]
+
+        rows = list(zip(*[broadcasted[k] for k in all_columns]))
+        for row in rows:
+            extended_row = list(row) + [""] * (len(all_columns) - len(row))
+            all_data_rows.append(extended_row)
+
+# 📝 Write merged TXT file (tab-separated)
+with open(output_file, "w", encoding="utf-8") as file:
+    file.write('\t'.join(all_columns) + "\n")
+    for row in all_data_rows:
+        file.write('\t'.join(str(val) for val in row) + "\n")
+
+print(f"\n✅ Done! Output saved to: {output_file}")
+
+
+
+
+
+
+
+
 
 
 
