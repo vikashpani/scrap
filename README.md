@@ -1,3 +1,104 @@
+import pandas as pd
+from io import BytesIO
+
+# --- Configurable Inputs ---
+manual_file = "manual.xlsx"
+db_file = "db.xlsx"
+output_file = "Mismatch_Report.xlsx"
+
+# Mapping: manual column → db column
+column_mapping = {
+    "CLAIM HCC ID": "CLAIM_ID",
+    "IS_FIRST_PASS_AUTO_ADJUDICATE": "IS_FIRST_PASS_AUTO_ADJUDICATE",
+    "IS_ADJUSTI": "IS_ADJUSTI",
+    "CLAIM_STATI": "CLAIM_STATI",
+    "F": "F",
+    "G": "G",
+    "Actual Error Message": "Actual Error Message"
+}
+
+# --- Helper function to normalize values ---
+def normalize(val):
+    if pd.isnull(val):
+        return ""
+    return str(val).strip().strip("'").lower()
+
+# --- Load data ---
+df_manual = pd.read_excel(manual_file)
+df_db = pd.read_excel(db_file)
+
+# --- Compare Logic ---
+mismatches = []
+
+for idx, manual_row in df_manual.iterrows():
+    # Normalize and lookup by CLAIM HCC ID
+    claim_id_manual_col = "CLAIM HCC ID"
+    claim_id_db_col = column_mapping[claim_id_manual_col]
+    manual_claim_id = normalize(manual_row[claim_id_manual_col])
+
+    candidates = df_db[
+        df_db[claim_id_db_col]
+        .astype(str)
+        .str.strip()
+        .str.strip("'")
+        .str.lower() == manual_claim_id
+    ]
+
+    if candidates.empty:
+        mismatches.append({
+            "RowIndex": idx,
+            "Status": "❌ Not Found in DB",
+            "Manual_Row": manual_row.to_dict(),
+            "Expected_DB_Row": None
+        })
+    else:
+        db_row = candidates.iloc[0]
+        mismatch_found = False
+        for m_col, d_col in column_mapping.items():
+            m_val = normalize(manual_row.get(m_col))
+            d_val = normalize(db_row.get(d_col))
+            if m_val != d_val:
+                mismatch_found = True
+                break
+
+        if mismatch_found:
+            mismatches.append({
+                "RowIndex": idx,
+                "Status": "⚠️ Value Mismatch",
+                "Manual_Row": manual_row.to_dict(),
+                "Expected_DB_Row": db_row.to_dict()
+            })
+
+# --- Convert mismatches to dataframe ---
+records = []
+for item in mismatches:
+    row = {
+        "RowIndex": item["RowIndex"],
+        "Status": item["Status"]
+    }
+    for k, v in (item["Manual_Row"] or {}).items():
+        row[f"Manual_{k}"] = v
+    for k, v in (item["Expected_DB_Row"] or {}).items():
+        row[f"Expected_{k}"] = v
+    records.append(row)
+
+# --- Save to Excel ---
+if records:
+    result_df = pd.DataFrame(records)
+    result_df.to_excel(output_file, index=False)
+    print(f"✅ Mismatches written to '{output_file}' ({len(result_df)} mismatches).")
+else:
+    print("✅ All rows matched successfully.")
+
+
+
+
+
+
+
+
+
+
 ChatGPT
 Saved memory full
 You said:
