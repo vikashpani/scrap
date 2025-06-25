@@ -1,3 +1,99 @@
+
+import pandas as pd
+
+# Input files and config
+db_file = "db_file.xlsx"
+manual_file = "manual_file.xlsx"
+output_file = "comparison_result.xlsx"
+
+# Sheet names (optional if you want default sheet)
+db_sheet = "Sheet1"
+manual_sheet = "Sheet1"
+
+# Mapping: manual_col -> db_col
+column_mapping = {
+    "Manual_Name": "DB_Name",
+    "Manual_ID": "DB_ID",
+    "Manual_Date": "DB_Date"
+}
+
+# Load files
+df_db = pd.read_excel(db_file, sheet_name=db_sheet)
+df_manual = pd.read_excel(manual_file, sheet_name=manual_sheet)
+
+# Convert mapping into two lists
+manual_cols = list(column_mapping.keys())
+db_cols = [column_mapping[col] for col in manual_cols]
+
+# Store mismatches
+mismatches = []
+
+# Iterate each row in manual file
+for idx, manual_row in df_manual.iterrows():
+    # Try to find matching row in DB based on unique identifier or all fields
+    matches = df_db.copy()
+    
+    for m_col, d_col in column_mapping.items():
+        matches = matches[matches[d_col] == manual_row[m_col]]
+
+    if matches.empty:
+        # No match found
+        mismatches.append({
+            "RowIndex": idx,
+            "Status": "Not Found in DB",
+            "Manual_Row": manual_row.to_dict(),
+            "Expected_DB_Row": None
+        })
+    else:
+        # Found potential match, compare field by field
+        db_row = matches.iloc[0]
+        mismatch_found = False
+        for m_col, d_col in column_mapping.items():
+            if pd.isnull(manual_row[m_col]) and pd.isnull(db_row[d_col]):
+                continue
+            elif manual_row[m_col] != db_row[d_col]:
+                mismatch_found = True
+                break
+        if mismatch_found:
+            mismatches.append({
+                "RowIndex": idx,
+                "Status": "Mismatch",
+                "Manual_Row": manual_row.to_dict(),
+                "Expected_DB_Row": db_row.to_dict()
+            })
+
+# Create a flat dataframe from mismatches
+records = []
+for item in mismatches:
+    row = {
+        "RowIndex": item["RowIndex"],
+        "Status": item["Status"]
+    }
+    # Flatten the fields
+    for k, v in (item["Manual_Row"] or {}).items():
+        row[f"Manual_{k}"] = v
+    for k, v in (item["Expected_DB_Row"] or {}).items():
+        row[f"Expected_{k}"] = v
+    records.append(row)
+
+# Save to Excel
+output_df = pd.DataFrame(records)
+output_df.to_excel(output_file, index=False)
+print(f"Comparison completed. Mismatches saved to: {output_file}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 with open("output.txt", "w") as file:
     s = "|".join(col for col in all_columns)
     file.write(s + "\n")  # Write header with newline
