@@ -1,3 +1,37 @@
+with open("output.txt", "w") as file:
+    s = "|".join(col for col in all_columns)
+    file.write(s + "\n")  # Write header with newline
+
+    for row in all_data_rows:
+        s = "|".join(row_val for row_val in row)
+        file.write(s + "\n")  # Write each row with newline
+
+
+def format_cell(val):
+    val = val.strip()
+    if val == "":
+        return ""
+    # Wrap leading zero numbers as string
+    if val.isdigit() and val.startswith("0"):
+        return f"'{val}"
+    # Wrap date-like formats as string (basic check)
+    if "-" in val or "/" in val:
+        return f"'{val}"
+    return val
+
+filled = [format_cell(val) for val in filled]
+
+
+
+
+
+
+
+
+
+
+
+
 import os
 from glob import glob
 from itertools import zip_longest
