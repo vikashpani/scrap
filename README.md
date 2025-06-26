@@ -1,3 +1,154 @@
+# compare_excel.py
+
+import pandas as pd
+import pyodbc
+import sys
+import argparse
+
+# --- Argument Parser ---
+parser = argparse.ArgumentParser(description="Compare Manual Excel to DB")
+parser.add_argument("--manual_file", required=True, help="Manual Excel file path")
+parser.add_argument("--sheet_name", default=0, help="Sheet name or index")
+parser.add_argument("--server", required=True, help="SQL Server address, e.g., 172.28.196.4,1433")
+parser.add_argument("--database", required=True, help="Database name")
+args = parser.parse_args()
+
+# --- Column Mapping (hardcoded for now) ---
+column_mapping = {
+    "CLAIM HCC ID": "CLAIM_HCC_ID",
+    "IS_FIRST_PASS_AUTO_ADJUDICATE": "IS_FIRST_PASS_AUTO_ADJUDICATED",
+    "IS_ADJUSTI": "IS_ADJUSTED",
+    "CLAIM_STATI": "CLAIM_STATUS",
+    "F": "CLAIM_TYPE_NAME"
+}
+
+# --- Normalize helper ---
+def normalize(val):
+    if pd.isnull(val):
+        return ""
+    return str(val).strip().strip("'").lower()
+
+# --- Connect to DB ---
+conn_str = f'DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={args.server};DATABASE={args.database};Trusted_Connection=yes;'
+conn = pyodbc.connect(conn_str)
+
+query = """
+SELECT CLAIM_HCC_ID, IS_FIRST_PASS_AUTO_ADJUDICATED, IS_ADJUSTED, CLAIM_STATUS, CLAIM_TYPE_NAME
+FROM (
+    SELECT CLAIM_HCC_ID, IS_FIRST_PASS_AUTO_ADJUDICATED, IS_ADJUSTED, CLAIM_STATUS, CLAIM_TYPE_NAME,
+           RANK() OVER (PARTITION BY CLAIM_HCC_ID ORDER BY MOST_RECENT_PROCESS_TIME DESC) AS latestrecord
+    FROM dbo.ALL_CLAIM_FACT
+) a
+WHERE latestrecord = 1
+"""
+
+df_db = pd.read_sql(query, conn)
+
+# --- Load manual file ---
+df_manual = pd.read_excel(args.manual_file, sheet_name=args.sheet_name)
+
+# --- Compare Logic ---
+mismatches = []
+
+for idx, manual_row in df_manual.iterrows():
+    claim_id_manual_col = "CLAIM HCC ID"
+    claim_id_db_col = column_mapping[claim_id_manual_col]
+    manual_claim_id = normalize(manual_row[claim_id_manual_col])
+
+    candidates = df_db[
+        df_db[claim_id_db_col]
+        .astype(str)
+        .str.strip()
+        .str.strip("'")
+        .str.lower() == manual_claim_id
+    ]
+
+    if candidates.empty:
+        mismatches.append({
+            "RowIndex": idx,
+            "Status": "❌ Not Found in DB",
+            "Manual_Row": manual_row.to_dict(),
+            "Expected_DB_Row": None
+        })
+    else:
+        db_row = candidates.iloc[0]
+        mismatch_found = False
+        for m_col, d_col in column_mapping.items():
+            m_val = normalize(manual_row.get(m_col))
+            d_val = normalize(db_row.get(d_col))
+            if m_val != d_val:
+                mismatch_found = True
+                break
+
+        if mismatch_found:
+            mismatches.append({
+                "RowIndex": idx,
+                "Status": "⚠️ Value Mismatch",
+                "Manual_Row": manual_row.to_dict(),
+                "Expected_DB_Row": db_row.to_dict()
+            })
+
+# --- Save Mismatch Report ---
+output_file = "Mismatch_Report.xlsx"
+records = []
+for item in mismatches:
+    row = {
+        "RowIndex": item["RowIndex"],
+        "Status": item["Status"]
+    }
+    for k, v in (item["Manual_Row"] or {}).items():
+        row[f"Manual_{k}"] = v
+    for k, v in (item["Expected_DB_Row"] or {}).items():
+        row[f"Expected_{k}"] = v
+    records.append(row)
+
+if records:
+    result_df = pd.DataFrame(records)
+    result_df.to_excel(output_file, index=False)
+    print(f"✅ Mismatches written to '{output_file}' ({len(result_df)} mismatches).")
+else:
+    print("✅ All rows matched successfully.")
+
+
+
+
+
+#!/bin/bash
+
+# Usage check
+if [ "$#" -lt 4 ]; then
+  echo "Usage: $0 <manual_file.xlsx> <sheet_name> <server_address> <database>"
+  exit 1
+fi
+
+# Read arguments
+MANUAL_FILE=$1
+SHEET_NAME=$2
+SERVER=$3
+DATABASE=$4
+
+# Run Python script
+python compare_excel.py \
+  --manual_file "$MANUAL_FILE" \
+  --sheet_name "$SHEET_NAME" \
+  --server "$SERVER" \
+  --database "$DATABASE"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import pandas as pd
 from io import BytesIO
 
