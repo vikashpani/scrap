@@ -1,3 +1,164 @@
+Generate as many realistic, **non-redundant** test case scenarios as the content supports under the following three categories:
+- Fraud
+- Abuse
+- Wastage
+
+For each:
+- Only return:
+  - TestCase: A short title (3–6 words)
+  - Description: 1–2 line explanation
+
+❗ Only output raw JSON. Do not use markdown, explanations, or extra formatting.
+
+JSON format:
+{
+  "fraud": [ { "description": "..." }, ... ],
+  "abuse": [ { "description": "..." }, ... ],
+  "wastage": [ { "description": "..." }, ... ]
+}
+""")
+
+
+
+import os
+import json
+import hashlib
+import pandas as pd
+from tqdm import tqdm
+from qdrant_client import QdrantClient
+from langchain.embeddings import HuggingFaceBgeEmbeddings
+from langchain.vectorstores import Qdrant
+from langchain_groq import ChatGroq
+from langchain.prompts import PromptTemplate
+
+# ------------------ Config ------------------
+QDRANT_URL = "http://localhost:6333"
+COLLECTION_NAME = "fraud-docs"
+GROQ_API_KEY = os.getenv("GROQ_API_KEY") or "your-groq-api-key"
+MODEL_NAME = "mixtral-8x7b-32768"  # or "llama3-8b-8192"
+
+# ------------------ Initialize Clients ------------------
+client = QdrantClient(url=QDRANT_URL)
+embedding_model = HuggingFaceBgeEmbeddings(model_name="BAAI/bge-base-en")
+
+vectorstore = Qdrant(
+    client=client,
+    collection_name=COLLECTION_NAME,
+    embeddings=embedding_model,
+)
+
+llm = ChatGroq(groq_api_key=GROQ_API_KEY, model_name=MODEL_NAME)
+
+# ------------------ Prompt Template ------------------
+prompt_template = PromptTemplate.from_template("""
+You are generating realistic test scenarios for MetroPlus Health Plan's internal testing.
+
+Given the following document content:
+{context}
+
+Generate as many realistic, **non-redundant** test case scenarios as the content supports under the following three categories:
+- Fraud
+- Abuse
+- Wastage
+
+For each:
+- Only return:
+  - TestCase: A short title (3–6 words)
+  - Description: 1–2 line explanation
+
+❗ Only output raw JSON. Do not use markdown, explanations, or extra formatting.
+
+JSON format:
+{
+  "fraud": [ { "description": "..." }, ... ],
+  "abuse": [ { "description": "..." }, ... ],
+  "wastage": [ { "description": "..." }, ... ]
+}
+""")
+
+# ------------------ Helpers ------------------
+def hash_description(desc):
+    return hashlib.sha256(desc.strip().lower().encode()).hexdigest()
+
+def deduplicate(scenarios):
+    seen, unique = set(), []
+    for s in scenarios:
+        key = hash_description(s["description"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(s)
+    return unique
+
+def to_dataframe(scenario_list):
+    return pd.DataFrame([
+        {
+            "TestCase": s["description"].split(".")[0][:60].strip(),
+            "Description": s["description"].strip()
+        }
+        for s in scenario_list if "description" in s
+    ])
+
+# ------------------ Scenario Generation ------------------
+fraud_all, abuse_all, wastage_all = [], [], []
+
+docs = vectorstore.similarity_search("fraud abuse wastage healthcare claims metroplus", k=50)
+
+for i in tqdm(range(0, len(docs), 5)):
+    chunk = docs[i:i+5]
+    context = "\n\n".join(doc.page_content for doc in chunk)
+    prompt = prompt_template.format(context=context)
+
+    try:
+        response = llm.invoke(prompt)
+        raw_output = response.content if hasattr(response, "content") else response
+        raw_text = raw_output.strip()
+
+        # Clean markdown wrapper if present
+        if raw_text.startswith("```json"):
+            raw_text = raw_text.lstrip("```json").rstrip("```").strip()
+        elif raw_text.startswith("```"):
+            raw_text = raw_text.lstrip("```").rstrip("```").strip()
+
+        # Attempt JSON parsing
+        output = json.loads(raw_text)
+        if not isinstance(output, dict):
+            raise ValueError("Returned object is not a valid JSON dictionary")
+
+        fraud_all.extend(output.get("fraud", []))
+        abuse_all.extend(output.get("abuse", []))
+        wastage_all.extend(output.get("wastage", []))
+
+    except Exception as e:
+        print(f"\n⚠️ Error in chunk {i}: {e}\nRaw response:\n{raw_text[:500]}\n")
+        continue
+
+# ------------------ Deduplicate ------------------
+fraud_all = deduplicate(fraud_all)
+abuse_all = deduplicate(abuse_all)
+wastage_all = deduplicate(wastage_all)
+
+# ------------------ Save to Excel ------------------
+output_file = "MetroPlus_TestScenarios.xlsx"
+with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
+    to_dataframe(fraud_all).to_excel(writer, sheet_name="Fraud", index=False)
+    to_dataframe(abuse_all).to_excel(writer, sheet_name="Abuse", index=False)
+    to_dataframe(wastage_all).to_excel(writer, sheet_name="Wastage", index=False)
+
+print("\n✅ Excel file saved as:", output_file)
+print(f"📊 Fraud: {len(fraud_all)} | Abuse: {len(abuse_all)} | Wastage: {len(wastage_all)}")
+
+
+
+
+
+
+
+
+
+
+
+
+
 import os
 import json
 import hashlib
