@@ -1,3 +1,45 @@
+# Use first 3 docs for now
+context = "\n\n".join(doc.page_content for doc in docs[:3])
+
+# Format the prompt into string
+prompt_text = prompt_template.format(context=context).to_string()
+
+# Send to Groq
+response = llm.invoke(prompt_text)
+
+# Get plain response text
+raw_output = response.content if hasattr(response, "content") else str(response)
+print("🧾 LLM raw response (start):\n", raw_output[:500])
+
+
+
+import json
+
+# Clean markdown formatting if any
+clean_output = raw_output.strip()
+if clean_output.startswith("```json"):
+    clean_output = clean_output.lstrip("```json").rstrip("```").strip()
+elif clean_output.startswith("```"):
+    clean_output = clean_output.lstrip("```").rstrip("```").strip()
+
+# Try parsing
+try:
+    parsed = json.loads(clean_output)
+    print("✅ Parsed JSON keys:", list(parsed.keys()))
+except Exception as e:
+    print("❌ JSON parse error:", e)
+    print("🔎 Cleaned text:\n", clean_output[:500])
+
+
+
+
+
+
+
+
+
+
+
 from langchain_groq import ChatGroq
 from langchain.prompts import PromptTemplate
 
