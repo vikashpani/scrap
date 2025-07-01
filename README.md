@@ -1,3 +1,46 @@
+from qdrant_client import QdrantClient
+from langchain.vectorstores import Qdrant
+from langchain.embeddings import HuggingFaceBgeEmbeddings
+
+# Qdrant setup
+QDRANT_URL = "http://localhost:6333"
+COLLECTION_NAME = "fraud-docs"
+
+# Connect to Qdrant
+client = QdrantClient(url=QDRANT_URL)
+embedding_model = HuggingFaceBgeEmbeddings(model_name="BAAI/bge-base-en")
+
+# Load vector store
+vectorstore = Qdrant(
+    client=client,
+    collection_name=COLLECTION_NAME,
+    embeddings=embedding_model,
+)
+
+# Fetch documents
+docs = vectorstore.similarity_search("fraud abuse wastage in MetroPlus", k=10)
+
+# Print sample document
+print("📄 First doc sample:\n", docs[0].page_content[:300])
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Generate as many realistic, **non-redundant** test case scenarios as the content supports under the following three categories:
 - Fraud
 - Abuse
