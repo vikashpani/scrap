@@ -1,3 +1,31 @@
+prompt_template = PromptTemplate.from_template("""
+You are generating test scenarios for MetroPlus Health Plan.
+
+Given the following document content:
+{context}
+
+Generate as many test case scenarios as possible under:
+- fraud
+- abuse
+- wastage
+
+Output only raw JSON with keys 'fraud', 'abuse', and 'wastage'. No markdown. No explanation.
+
+Example:
+{{
+  "fraud": [{{"description": "..."}}, ...],
+  "abuse": [{{"description": "..."}}, ...],
+  "wastage": [{{"description": "..."}}, ...]
+}}
+""")
+
+
+
+
+
+
+
+
 from langchain_groq import ChatGroq
 from langchain.prompts import PromptTemplate
 
