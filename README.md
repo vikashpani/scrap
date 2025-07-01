@@ -1,3 +1,51 @@
+from langchain_groq import ChatGroq
+from langchain.prompts import PromptTemplate
+
+# Step 1: Define LLM
+llm = ChatGroq(
+    groq_api_key="your-groq-api-key",  # Replace with your actual key
+    model_name="mixtral-8x7b-32768"
+)
+
+# Step 2: Create the prompt
+prompt_template = PromptTemplate.from_template("""
+You are generating test scenarios for MetroPlus Health Plan.
+
+Analyze this text:
+{context}
+
+Return JSON:
+{
+  "fraud": [ { "description": "..." }, ... ],
+  "abuse": [ { "description": "..." }, ... ],
+  "wastage": [ { "description": "..." }, ... ]
+}
+
+No markdown or explanation.
+""")
+
+# Step 3: Use fake test context
+context = "MetroPlus receives duplicate claims from the same provider. Also, tests ordered unnecessarily for healthy patients."
+
+prompt_text = prompt_template.format(context=context).to_string()
+
+# Step 4: Call the model
+response = llm.invoke(prompt_text)
+
+# Step 5: Show raw output
+print("🧾 Raw response:\n", response.content if hasattr(response, "content") else str(response))
+
+
+
+
+
+
+
+
+
+
+
+
 # Use first 3 docs for now
 context = "\n\n".join(doc.page_content for doc in docs[:3])
 
