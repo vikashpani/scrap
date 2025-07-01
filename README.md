@@ -1,3 +1,149 @@
+import os
+import json
+import hashlib
+import pandas as pd
+from tqdm import tqdm
+from qdrant_client import QdrantClient
+from langchain.embeddings import HuggingFaceBgeEmbeddings
+from langchain.vectorstores import Qdrant
+from langchain_groq import ChatGroq
+from langchain.prompts import PromptTemplate
+
+# ------------------ Config ------------------
+QDRANT_URL = "http://localhost:6333"
+COLLECTION_NAME = "fraud-docs"
+GROQ_API_KEY = os.getenv("GROQ_API_KEY") or "your-groq-api-key"
+MODEL_NAME = "mixtral-8x7b-32768"  # Alternatives: "llama3-8b-8192"
+
+# Connect to Qdrant
+client = QdrantClient(url=QDRANT_URL)
+embedding_model = HuggingFaceBgeEmbeddings(model_name="BAAI/bge-base-en")
+
+vectorstore = Qdrant(
+    client=client,
+    collection_name=COLLECTION_NAME,
+    embeddings=embedding_model,
+)
+
+# Groq LLM
+llm = ChatGroq(groq_api_key=GROQ_API_KEY, model_name=MODEL_NAME)
+
+# ------------------ Prompt Template ------------------
+prompt_template = PromptTemplate.from_template("""
+You are generating realistic test scenarios for MetroPlus Health Plan's internal system validation.
+
+Analyze the following document content:
+
+{context}
+
+Based on this, generate as many unique and realistic test case scenarios as you can. Focus on fraud, abuse, and wastage scenarios relevant to:
+- Claims processing
+- Provider behavior
+- Pharmacy or diagnostic misuse
+- MetroPlus Health Plan workflows
+
+For each test case:
+- Only include:
+  - TestCase: short 3–6 word title
+  - Description: 1–2 line explanation
+
+Return JSON in the format:
+{
+  "fraud": [ { "description": "..." }, ... ],
+  "abuse": [...],
+  "wastage": [...]
+}
+""")
+
+# ------------------ Helpers ------------------
+def hash_description(desc):
+    return hashlib.sha256(desc.strip().lower().encode()).hexdigest()
+
+def deduplicate(scenarios):
+    seen, unique = set(), []
+    for s in scenarios:
+        key = hash_description(s["description"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(s)
+    return unique
+
+def to_dataframe(scenario_list):
+    return pd.DataFrame([
+        {
+            "TestCase": s["description"].split(".")[0][:60].strip(),
+            "Description": s["description"].strip()
+        }
+        for s in scenario_list
+    ])
+
+# ------------------ Scenario Generation Loop ------------------
+fraud_all, abuse_all, wastage_all = [], [], []
+
+# Retrieve documents
+docs = vectorstore.similarity_search("fraud abuse wastage healthcare claims metroplus", k=50)
+
+# Chunk docs in groups of 5
+for i in tqdm(range(0, len(docs), 5)):
+    chunk = docs[i:i+5]
+    context = "\n\n".join(doc.page_content for doc in chunk)
+    prompt = prompt_template.format(context=context)
+
+    try:
+        response = llm.invoke(prompt)
+        output = json.loads(response) if isinstance(response, str) else json.loads(response.content)
+
+        fraud_all.extend(output.get("fraud", []))
+        abuse_all.extend(output.get("abuse", []))
+        wastage_all.extend(output.get("wastage", []))
+
+    except Exception as e:
+        print(f"⚠️ Error in chunk {i}: {e}")
+        continue
+
+# Deduplicate
+fraud_all = deduplicate(fraud_all)
+abuse_all = deduplicate(abuse_all)
+wastage_all = deduplicate(wastage_all)
+
+# ------------------ Save to Excel ------------------
+with pd.ExcelWriter("MetroPlus_TestScenarios.xlsx", engine="openpyxl") as writer:
+    to_dataframe(fraud_all).to_excel(writer, sheet_name="Fraud", index=False)
+    to_dataframe(abuse_all).to_excel(writer, sheet_name="Abuse", index=False)
+    to_dataframe(wastage_all).to_excel(writer, sheet_name="Wastage", index=False)
+
+print("✅ Excel file saved as: MetroPlus_TestScenarios.xlsx")
+print(f"📊 Fraud: {len(fraud_all)} | Abuse: {len(abuse_all)} | Wastage: {len(wastage_all)}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
