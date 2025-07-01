@@ -1,3 +1,65 @@
+import pandas as pd
+import plotly.express as px
+from datetime import datetime
+
+# Convert ServDate to datetime
+merged_df['ServDate'] = pd.to_datetime(merged_df['ServDate'])
+
+# Extract date (YYYY-MM-DD) for daily trend
+merged_df['Date'] = merged_df['ServDate'].dt.date
+
+# Group by Date and ClaimType
+daily_trend = merged_df.groupby(['Date', 'ClaimType']).size().reset_index(name='ClaimCount')
+
+# Sort the trend data by date
+daily_trend = daily_trend.sort_values('Date')
+
+# Plot the daily trend
+fig = px.line(
+    daily_trend,
+    x='Date',
+    y='ClaimCount',
+    color='ClaimType',
+    markers=True,
+    line_shape='spline',
+    title='Daily Claim Trend Analysis'
+)
+
+fig.update_traces(line=dict(width=2))
+fig.update_layout(
+    xaxis_title='Date',
+    yaxis_title='Number of Claims',
+    yaxis=dict(type='log', showgrid=False),
+    font_color="#303030",
+    height=800,
+    template='plotly_white'
+)
+
+# Show plot
+fig.show()
+
+# Save to Excel with current date in filename
+today_str = datetime.today().strftime('%Y-%m-%d')
+output_filename = f"Daily_Claim_Trend_{today_str}.xlsx"
+daily_trend.to_excel(output_filename, index=False)
+
+print(f"Daily claim trend data saved to: {output_filename}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # compare_excel.py
 
 import pandas as pd
