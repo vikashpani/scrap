@@ -1,3 +1,49 @@
+from langchain_groq import ChatGroq
+from langchain.prompts import PromptTemplate
+
+# Init Groq
+llm = ChatGroq(
+    groq_api_key="your-groq-api-key",  # 🔁 Replace with your key or use os.getenv
+    model_name="mixtral-8x7b-32768"
+)
+
+# Create prompt template
+prompt_template = PromptTemplate.from_template("""
+You are generating test scenarios for MetroPlus Health Plan.
+
+Analyze this text:
+{context}
+
+Give as many unique test case scenarios as possible under:
+- fraud
+- abuse
+- wastage
+
+Return valid JSON with this format only (even if some are empty):
+
+{
+  "fraud": [ { "description": "..." }, ... ],
+  "abuse": [ { "description": "..." }, ... ],
+  "wastage": [ { "description": "..." }, ... ]
+}
+
+No markdown, no explanation.
+""")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 from qdrant_client import QdrantClient
 from langchain.vectorstores import Qdrant
 from langchain.embeddings import HuggingFaceBgeEmbeddings
