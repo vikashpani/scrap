@@ -1,3 +1,142 @@
+
+import re
+import xml.etree.ElementTree as ET
+from collections import defaultdict
+from itertools import zip_longest
+
+# Used to store nested list target tag outputs
+nested_list_outputs = defaultdict(list)
+
+def flatten_xml(elem, result, tag_order, prefix="", claim_id=None):
+    for child in elem:
+        tag = child.tag.split("}")[-1]
+        tag = elem.tag + '_' + tag  # include parent
+        key = f"{tag}".lower().replace(" ", "")
+        if key not in tag_order:
+            tag_order.append(key)
+
+        # Store text
+        if child.text and child.text.strip():
+            result[key].append(child.text.strip())
+
+        flatten_xml(child, result, tag_order, key)
+
+def extract_claim_and_nested(file_path, target_tags):
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    # Find all ConvertedSupplierInvoice blocks
+    pattern = re.compile(r"<ConvertedSupplierInvoice\b.*?>.*?</ConvertedSupplierInvoice>", re.DOTALL)
+    matches = pattern.findall(content)
+
+    parsed_rows = []
+    
+    for fragment in matches:
+        try:
+            elem = ET.fromstring(fragment)
+            result = defaultdict(list)
+            tag_order = []
+            claim_id = None
+
+            # Find hccClaimNumber
+            for node in elem.iter():
+                if node.tag.lower().endswith("hccclaimnumber") and node.text:
+                    claim_id = node.text.strip()
+                    break
+
+            # Flatten full block
+            flatten_xml(elem, result, tag_order)
+            parsed_rows.append((result, tag_order))
+
+            # Now extract target nested list tags
+            for target_tag in target_tags:
+                for target_list in elem.iter():
+                    if target_list.tag.lower().endswith(target_tag.lower()):
+                        for item in target_list:
+                            row = [claim_id]  # Always prepend claim_id
+                            for child in item:
+                                val = child.text.strip() if child.text else ""
+                                row.append(val)
+                            nested_list_outputs[target_tag.lower()].append(row)
+
+        except ET.ParseError as e:
+            print(f"Skipped malformed block: {e}")
+            with open('failed_xml.txt', 'a', encoding='utf-8') as err:
+                err.write(fragment.replace("\n", "").strip() + "\n")
+
+    return parsed_rows
+
+def format_cell(val):
+    val = val.strip()
+    if val == "":
+        return ""
+    elif val.isdigit() and val.startswith("0"):
+        return f"'{val}"
+    elif "-" in val or "/" in val:
+        return f"'{val}"
+    else:
+        return val
+
+# Main execution
+file_path = "data/claimone.xml"
+target_tags = ["DiagnosisCodeList", "ProcedureList"]  # Add more tags if needed
+
+parsed_rows = extract_claim_and_nested(file_path, target_tags)
+
+# Process and write flattened XML output (as before)
+all_columns = []
+all_data_rows = []
+
+for result, tag_order in parsed_rows:
+    new_cols = [col for col in tag_order if col not in all_columns]
+    all_columns.extend(new_cols)
+
+    max_len = max((len(v) for v in result.values()), default=1)
+    broadcasted = {}
+
+    for col in all_columns:
+        values = result.get(col, [])
+        if not values:
+            broadcasted[col] = [""] * max_len
+            continue
+
+        first_val = next((val for val in values if val.strip()), "")
+        filled = [val if val.strip() else first_val for val in values]
+        if len(filled) < max_len:
+            filled += [first_val] * (max_len - len(filled))
+        filled = [format_cell(val) for val in filled]
+        broadcasted[col] = filled
+
+    rows = list(zip(*[broadcasted[k] for k in all_columns]))
+
+    for row in rows:
+        extended_row = list(row) + [""] * (len(all_columns) - len(row))
+        all_data_rows.append(extended_row)
+
+# Write full flattened data
+with open("output_claimone.txt", "w", encoding="utf-8") as file:
+    file.write("|".join(all_columns) + "\n")
+    for row in all_data_rows:
+        file.write("|".join(row) + "\n")
+
+# Write each nested list tag to separate file
+for tag, rows in nested_list_outputs.items():
+    with open(f"{tag}.txt", "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write("|".join(row) + "\n")
+
+
+
+
+
+
+
+
+
+
+
+
+
 re.compile(
     fr"<hccClaimNumber\b[^>]*>.*?</hccClaimNumber>.*?<({target_tag})\b[^>]*>.*?</\1>",
     re.DOTALL
