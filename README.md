@@ -1,3 +1,14 @@
+re.compile(
+    fr"<hccClaimNumber\b[^>]*>.*?</hccClaimNumber>.*?<({target_tag})\b[^>]*>.*?</\1>",
+    re.DOTALL
+)
+
+
+
+
+
+
+
 
 def merge_nested_lists(list1, list2):
     if len(list1) != len(list2):
