@@ -1,4 +1,31 @@
 
+def merge_nested_lists(list1, list2):
+    if len(list1) != len(list2):
+        raise ValueError("Both nested lists must have the same number of rows.")
+
+    merged = []
+    for sub1, sub2 in zip(list1, list2):
+        merged.append(sub1 + sub2)
+    
+    return merged
+
+# Example input
+list1 = [['a1', 'a2'], ['b1', 'b2']]
+list2 = [['x1', 'x2'], ['y1', 'y2']]
+
+# Call function
+merged_output = merge_nested_lists(list1, list2)
+
+# Print result
+for row in merged_output:
+    print(row)
+
+
+
+
+
+
+
 
 import re
 import xml.etree.ElementTree as ET
