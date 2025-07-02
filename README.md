@@ -1,3 +1,74 @@
+
+
+import re
+import xml.etree.ElementTree as ET
+
+def extract_claim_id(block):
+    try:
+        root = ET.fromstring(block)
+        for elem in root.iter():
+            if elem.tag.lower().endswith("hccclaimnumber") and elem.text:
+                return elem.text.strip()
+    except ET.ParseError:
+        pass
+    return ""
+
+def extract_target_fields(fragment, target_tag):
+    try:
+        elem = ET.fromstring(fragment)
+        rows = []
+        for sub in elem:
+            row = []
+            for child in sub:
+                row.append(child.text.strip() if child.text else "")
+            rows.append(row)
+        return rows
+    except ET.ParseError:
+        return []
+
+def process_target_blocks(file_path, outer_tag, target_tags):
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    outer_pattern = re.compile(fr"<{outer_tag}\b.*?>.*?</{outer_tag}>", re.DOTALL | re.IGNORECASE)
+    outer_blocks = outer_pattern.findall(content)
+
+    for target_tag in target_tags:
+        output_lines = []
+
+        for block in outer_blocks:
+            claim_id = extract_claim_id(block)
+
+            inner_pattern = re.compile(fr"<{target_tag}\b.*?>.*?</{target_tag}>", re.DOTALL | re.IGNORECASE)
+            target_blocks = inner_pattern.findall(block)
+
+            for target in target_blocks:
+                records = extract_target_fields(target, target_tag)
+                for record in records:
+                    output_lines.append("|".join([claim_id] + record))
+
+        if output_lines:
+            with open(f"{target_tag.lower()}_output.txt", "w", encoding="utf-8") as out_file:
+                for line in output_lines:
+                    out_file.write(line + "\n")
+            print(f"✅ {target_tag.lower()}_output.txt created with {len(output_lines)} rows.")
+        else:
+            print(f"⚠️ No records found for tag <{target_tag}>")
+
+# === Example Usage ===
+file_path = "data/claimone.xml"
+outer_tag = "ConvertedSupplierInvoice"
+target_tags = ["diagnosisCode", "procedureCode", "serviceCode"]  # replace as needed
+
+process_target_blocks(file_path, outer_tag, target_tags)
+
+
+
+
+
+
+
+
 import re
 import xml.etree.ElementTree as ET
 from collections import defaultdict
