@@ -1,5 +1,64 @@
 import re
 import xml.etree.ElementTree as ET
+
+# Your target tag (case-insensitive)
+TARGET_TAG = "diagnosisCode"
+
+# Output file
+OUTPUT_FILE = f"{TARGET_TAG.lower()}.txt"
+
+def extract_target_blocks(file_path, target_tag):
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    # Find all <ConvertedSupplierInvoice> blocks
+    pattern = re.compile(r"<ConvertedSupplierInvoice\b.*?>.*?</ConvertedSupplierInvoice>", re.DOTALL)
+    matches = pattern.findall(content)
+
+    rows = []
+
+    for xml_fragment in matches:
+        try:
+            root = ET.fromstring(xml_fragment)
+            # Get claim ID
+            claim_id = root.findtext(".//hccClaimNumber")
+            if not claim_id:
+                continue
+
+            # Find all tags matching the target (case-insensitive)
+            for elem in root.iter():
+                tag = elem.tag.split("}")[-1]  # Remove namespace
+                if tag.lower() == target_tag.lower() and elem.text and elem.text.strip():
+                    rows.append(f"{claim_id}|{elem.text.strip()}")
+        except ET.ParseError as e:
+            print(f"Skipped malformed XML block: {e}")
+            continue
+
+    return rows
+
+# Input file
+file_path = "data/claimone.xml"
+
+# Extract and write
+extracted_rows = extract_target_blocks(file_path, TARGET_TAG)
+with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+    for row in extracted_rows:
+        f.write(row + "\n")
+
+print(f"✅ Extracted {len(extracted_rows)} rows to {OUTPUT_FILE}")
+
+
+
+
+
+
+
+
+
+
+
+import re
+import xml.etree.ElementTree as ET
 from collections import defaultdict
 from itertools import zip_longest
 
