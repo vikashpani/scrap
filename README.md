@@ -1,5 +1,148 @@
 import re
 import xml.etree.ElementTree as ET
+from collections import defaultdict
+from itertools import zip_longest
+import os
+
+nested_list_data = defaultdict(list)
+
+def flatten_xml(elem, result, tag_order, prefix="", claim_id=None):
+    for child in elem:
+        tag = child.tag.split("}")[-1]
+        tag = elem.tag + '_' + tag  # include parent
+        key = f"{tag}".lower().replace(" ", "")
+        if key not in tag_order:
+            tag_order.append(key)
+
+        if tag.lower().endswith("hccclaimnumber") and child.text and child.text.strip():
+            claim_id = child.text.strip()
+
+        if child.text and child.text.strip() and len(child) == 0:
+            result[key].append(child.text.strip())
+
+        if len(child) > 0 and child.tag.lower().endswith("list"):
+            list_tag = child.tag.split("}")[-1].lower()
+            for sub_item in child:
+                row = []
+                for sub_child in sub_item:
+                    val = sub_child.text.strip() if sub_child.text else ""
+                    row.append(val)
+                if claim_id:
+                    row.insert(0, claim_id)
+                nested_list_data[list_tag].append(row)
+
+        flatten_xml(child, result, tag_order, key, claim_id)
+
+def parse_multiple_xml_etree(file_path, outer_tag, target_tag):
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    outer_pattern = re.compile(fr"<{outer_tag}\b.*?>.*?</{outer_tag}>", re.DOTALL | re.IGNORECASE)
+    matches = outer_pattern.findall(content)
+
+    all_rows = []
+
+    for xml_fragment in matches:
+        if not re.search(fr"<{target_tag}\b.*?>.*?</{target_tag}>", xml_fragment, re.IGNORECASE | re.DOTALL):
+            continue
+        try:
+            elem = ET.fromstring(xml_fragment)
+            result = defaultdict(list)
+            tag_order = []
+            flatten_xml(elem, result, tag_order)
+
+            max_len = max((len(v) for v in result.values()), default=0)
+            for k in result:
+                while len(result[k]) < max_len:
+                    result[k].append("")
+
+            all_rows.append((result, tag_order.copy()))
+        except ET.ParseError as e:
+            with open('failed_xml.txt', 'a', encoding='utf-8') as err_file:
+                err_file.write(xml_fragment.replace("\n", "").strip() + "\n")
+            continue
+
+    return all_rows
+
+def format_cell(val):
+    val = val.strip()
+    if val == "":
+        return ""
+    elif val.isdigit() and val.startswith("0"):
+        return f"'{val}"
+    elif "-" in val or "/" in val:
+        return f"'{val}"
+    else:
+        return val
+
+def run_for_target_tags(file_path, outer_tag, target_tags):
+    for tag in target_tags:
+        nested_list_data.clear()
+        parsed_rows = parse_multiple_xml_etree(file_path, outer_tag, tag)
+        print(f"✅ Parsed {len(parsed_rows)} blocks for tag <{tag}>")
+
+        all_columns = []
+        all_data_rows = []
+
+        for result, tag_order in parsed_rows:
+            new_cols = [col for col in tag_order if col not in all_columns]
+            all_columns.extend(new_cols)
+
+            max_len = max((len(v) for v in result.values()), default=1)
+            broadcasted = {}
+
+            for col in all_columns:
+                values = result.get(col, [])
+                if not values:
+                    broadcasted[col] = [""] * max_len
+                    continue
+                first_val = next((val for val in values if val.strip()), "")
+                filled = [val if val.strip() else first_val for val in values]
+                if len(filled) < max_len:
+                    filled += [first_val] * (max_len - len(filled))
+                filled = [format_cell(val) for val in filled]
+                broadcasted[col] = filled
+
+            rows = list(zip(*[broadcasted[k] for k in all_columns]))
+            for row in rows:
+                extended_row = list(row) + [""] * (len(all_columns) - len(row))
+                all_data_rows.append(extended_row)
+
+        output_txt = f"{tag.lower()}_output.txt"
+        with open(output_txt, "w", encoding="utf-8") as file:
+            file.write("|".join(all_columns) + "\n")
+            for row in all_data_rows:
+                file.write("|".join(row) + "\n")
+
+        for nested_tag, rows in nested_list_data.items():
+            with open(f"{tag.lower()}_{nested_tag}.txt", "w", encoding="utf-8") as f:
+                for row in rows:
+                    f.write("|".join(row) + "\n")
+
+    print("✅ All tag-specific files generated.")
+
+
+# EXAMPLE USAGE
+file_path = "data/claimone.xml"
+outer_tag = "ConvertedSupplierInvoice"
+target_tags = ["diagnosisCode", "procedureCode", "serviceCode"]  # pass your actual tags here
+
+run_for_target_tags(file_path, outer_tag, target_tags)
+
+
+
+
+
+
+
+
+
+
+
+
+
+import re
+import xml.etree.ElementTree as ET
 
 # Your target tag (case-insensitive)
 TARGET_TAG = "diagnosisCode"
