@@ -1,3 +1,128 @@
+import os
+import json
+import pandas as pd
+from langchain.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.embeddings import HuggingFaceBgeEmbeddings
+from langchain.vectorstores import Qdrant
+from qdrant_client import QdrantClient
+from langchain.prompts import PromptTemplate
+from langchain.chains import RetrievalQA
+from langchain_groq import ChatGroq
+
+# === CONFIGURATION ===
+GROQ_API_KEY = "your-groq-api-key"  # Replace this
+QDRANT_URL = "http://localhost:6333"
+COLLECTION_NAME = "fdd-testcases"
+PDF_FILES = {
+    "claims": "fdd_claims_mph.pdf",
+    "providers": "fdd_providers_mph.pdf",
+    "guidingcare": "fdd_guidingcare_mph.pdf",
+}
+RULES_PDF = "rules.pdf"
+
+# === STEP 1: LOAD & CHUNK ===
+print("📄 Loading documents...")
+loaders = [PyPDFLoader(RULES_PDF)]
+for name, path in PDF_FILES.items():
+    loaders.append(PyPDFLoader(path))
+
+documents = []
+for loader in loaders:
+    documents.extend(loader.load())
+
+print(f"✅ Total pages loaded: {len(documents)}")
+
+text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=50)
+chunks = text_splitter.split_documents(documents)
+print(f"🔪 Total chunks created: {len(chunks)}")
+
+# === STEP 2: EMBED & STORE TO QDRANT ===
+print("📦 Storing embeddings to Qdrant...")
+embedding_model = HuggingFaceBgeEmbeddings(model_name="BAAI/bge-base-en")
+qdrant = Qdrant.from_documents(
+    documents=chunks,
+    embedding=embedding_model,
+    location=QDRANT_URL,
+    collection_name=COLLECTION_NAME,
+)
+
+# === STEP 3: SETUP LLM + RAG CHAIN ===
+llm = ChatGroq(groq_api_key=GROQ_API_KEY, model_name="mixtral-8x7b-32768")
+
+prompt_template = PromptTemplate.from_template("""
+You are a test case generation engine for MetroPlus Health Plan QA team.
+
+Given the following FDD and rules content:
+{context}
+
+Extract as many **non-redundant** test scenarios as possible. Each test case should contain:
+
+1. TestCaseObjective — What is being validated?
+2. HowToDo — How to test it (what steps or input)?
+3. ExpectedOutcome — What should happen?
+
+Return only JSON in this format:
+[
+  {{
+    "TestCaseObjective": "...",
+    "HowToDo": "...",
+    "ExpectedOutcome": "..."
+  }},
+  ...
+]
+
+No markdown, no explanation.
+""")
+
+retriever = qdrant.as_retriever(search_kwargs={"k": 10})
+qa_chain = RetrievalQA.from_chain_type(
+    llm=llm,
+    retriever=retriever,
+    chain_type="stuff",
+    chain_type_kwargs={"prompt": prompt_template}
+)
+
+# === STEP 4: GENERATE TEST CASES FOR EACH FDD ===
+for fdd_key in PDF_FILES.keys():
+    print(f"\n🚀 Generating test cases for: {fdd_key}")
+
+    query = f"Generate test cases from {fdd_key} FDD in MetroPlus"
+    response = qa_chain.run(query)
+
+    clean = response.strip()
+    if clean.startswith("```json"):
+        clean = clean.replace("```json", "").replace("```", "").strip()
+
+    try:
+        testcases = json.loads(clean)
+    except Exception as e:
+        print(f"❌ JSON parsing failed for {fdd_key}: {e}")
+        with open(f"response_{fdd_key}.txt", "w") as f:
+            f.write(clean)
+        continue
+
+    df = pd.DataFrame(testcases)
+    filename = f"TestCases_{fdd_key}_MPH.xlsx"
+    df.to_excel(filename, index=False)
+    print(f"✅ Saved {len(df)} test cases to: {filename}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import re
 import xml.etree.ElementTree as ET
