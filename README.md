@@ -4,6 +4,110 @@ from langchain.prompts import PromptTemplate
 from langchain_groq import ChatGroq
 
 # === CONFIG ===
+GROQ_API_KEY = "your-groq-api-key"  # 🔁 Replace this
+MODEL_NAME = "mixtral-8x7b-32768"
+INPUT_FILE = "seed_testcases.xlsx"
+OUTPUT_FILE = "Expanded_TestCases.xlsx"
+SHEETS = ["Fraud", "Abuse", "Wastage"]
+
+# === STEP 1: SETUP LLM ===
+llm = ChatGroq(groq_api_key=GROQ_API_KEY, model_name=MODEL_NAME)
+
+prompt_template = PromptTemplate.from_template("""
+You are a QA tester for MetroPlus Health Plan.
+
+Given the following test scenario:
+"{scenario}"
+
+Generate as many detailed test cases as possible.
+Each test case must include:
+1. TestCaseObjective
+2. HowToDo
+3. ExpectedOutcome
+
+Respond only in JSON format like:
+[
+  {{
+    "TestCaseObjective": "...",
+    "HowToDo": "...",
+    "ExpectedOutcome": "..."
+  }},
+  ...
+]
+""")
+
+# === STEP 2: PROCESS EACH SHEET ===
+grouped_outputs = {}
+
+for sheet in SHEETS:
+    print(f"\n📄 Processing sheet: {sheet}")
+    df = pd.read_excel(INPUT_FILE, sheet_name=sheet)
+
+    # Clean + Filter rows
+    df['Status'] = df['Status'].astype(str).str.strip().str.upper()
+    df['AlreadyCovered'] = df['AlreadyCovered'].astype(str).str.strip().str.upper()
+    df = df[(df['Status'] == 'Y') & (df['AlreadyCovered'] != 'Y')]
+
+    output_rows = []
+
+    for _, row in df.iterrows():
+        scenario = row.get("ScenarioDescription", "").strip()
+        if not scenario:
+            continue
+
+        prompt = prompt_template.format(scenario=scenario).to_string()
+        try:
+            response = llm.invoke(prompt)
+            raw = response.content.strip().replace("```json", "").replace("```", "").strip()
+            cases = json.loads(raw)
+
+            if isinstance(cases, list):
+                for case in cases:
+                    case["ScenarioDescription"] = scenario
+                    output_rows.append(case)
+                print(f"✅ Scenario: '{scenario[:40]}...' → {len(cases)} test cases")
+            else:
+                print(f"⚠️ Skipped (not list): {scenario[:40]}")
+
+        except Exception as e:
+            print(f"❌ Error on: {scenario[:40]} → {e}")
+            with open("error_log.txt", "a") as f:
+                f.write(f"\n\nSheet: {sheet}\nScenario: {scenario}\nError: {e}\nResponse:\n{raw if 'raw' in locals() else 'N/A'}")
+
+    grouped_outputs[sheet] = output_rows
+
+# === STEP 3: WRITE OUTPUT TO MULTI-SHEET EXCEL ===
+with pd.ExcelWriter(OUTPUT_FILE) as writer:
+    for sheet, data in grouped_outputs.items():
+        if data:
+            df_out = pd.DataFrame(data)[["ScenarioDescription", "TestCaseObjective", "HowToDo", "ExpectedOutcome"]]
+            df_out.to_excel(writer, sheet_name=sheet, index=False)
+
+print(f"\n✅ All test cases saved to: {OUTPUT_FILE}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import pandas as pd
+import json
+from langchain.prompts import PromptTemplate
+from langchain_groq import ChatGroq
+
+# === CONFIG ===
 GROQ_API_KEY = "your-groq-api-key"  # replace this
 MODEL_NAME = "mixtral-8x7b-32768"
 INPUT_FILE = "seed_testcases.xlsx"
