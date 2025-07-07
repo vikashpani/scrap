@@ -1,3 +1,95 @@
+import pandas as pd
+import json
+from langchain.prompts import PromptTemplate
+from langchain_groq import ChatGroq
+
+# === CONFIG ===
+GROQ_API_KEY = "your-groq-api-key"  # replace this
+MODEL_NAME = "mixtral-8x7b-32768"
+INPUT_FILE = "seed_testcases.xlsx"
+OUTPUT_FILE = "Expanded_TestCases.xlsx"
+
+# === STEP 1: LOAD EXCEL & FILTER ===
+df = pd.read_excel(INPUT_FILE)
+df = df[df['Status'] == 'Y']  # Only keep those to expand
+
+# === STEP 2: PREP LLM ===
+llm = ChatGroq(groq_api_key=GROQ_API_KEY, model_name=MODEL_NAME)
+
+prompt_template = PromptTemplate.from_template("""
+You are an expert QA tester.
+
+Given the following test scenario:
+"{scenario}"
+
+Generate as many detailed test cases as possible.
+Each test case should have:
+1. TestCaseObjective (what to test)
+2. HowToDo (steps or setup)
+3. ExpectedOutcome (expected behavior)
+
+Respond only in JSON format like:
+[
+  {{
+    "TestCaseObjective": "...",
+    "HowToDo": "...",
+    "ExpectedOutcome": "..."
+  }},
+  ...
+]
+""")
+
+# === STEP 3: GROUP AND EXPAND ===
+grouped_results = {"Fraud": [], "Abuse": [], "Wastage": []}
+
+for _, row in df.iterrows():
+    scenario = row["ScenarioDescription"]
+    category = row["Category"].strip().capitalize()
+
+    prompt = prompt_template.format(scenario=scenario).to_string()
+    response = llm.invoke(prompt)
+    raw = response.content.strip().replace("```json", "").replace("```", "")
+
+    try:
+        cases = json.loads(raw)
+        for case in cases:
+            case["ScenarioDescription"] = scenario
+            grouped_results[category].append(case)
+        print(f"✅ Expanded: {scenario} -> {len(cases)} test cases")
+    except Exception as e:
+        print(f"❌ Failed on: {scenario} ({e})")
+        with open("error_output.txt", "a") as f:
+            f.write(f"\n\nScenario: {scenario}\nRaw:\n{raw}\n")
+
+# === STEP 4: WRITE TO EXCEL WITH MULTIPLE SHEETS ===
+with pd.ExcelWriter(OUTPUT_FILE) as writer:
+    for category, data in grouped_results.items():
+        if data:
+            pd.DataFrame(data)[["ScenarioDescription", "TestCaseObjective", "HowToDo", "ExpectedOutcome"]].to_excel(writer, sheet_name=category, index=False)
+
+print(f"\n📁 Test cases written to: {OUTPUT_FILE}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import os
 import json
 import pandas as pd
