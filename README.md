@@ -1,3 +1,20 @@
+filter=Filter(
+    must=[
+        FieldCondition(
+            key="source_type",
+            match=MatchAny(any=["claims", "rules"])
+        )
+    ]
+)
+
+
+
+
+
+
+
+
+
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 
 member_docs = qdrant.similarity_search(
