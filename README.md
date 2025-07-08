@@ -1,3 +1,53 @@
+base_cases = []
+
+for offset in range(0, MAX_CHUNKS, CHUNKS_PER_TYPE):
+    print(f"🔄 Retrieving FDD+Rules chunks: Offset {offset}")
+    docs = qdrant.similarity_search(
+        query,
+        k=CHUNKS_PER_TYPE,
+        offset=offset,
+        filter={"source_type": {"$in": ["claims", "rules"]}}
+    )
+
+    if not docs:
+        continue
+
+    context = "\n\n".join(doc.page_content for doc in docs)
+    prompt = base_prompt.format(context=context)
+
+    try:
+        response = llm.invoke(prompt)
+        raw = response.content.strip().replace("```json", "").replace("```", "")
+
+        if raw and (raw.startswith("{") or raw.startswith("[")):
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                base_cases.extend(parsed)
+            else:
+                base_cases.append(parsed)
+        else:
+            print(f"⚠️ Skipping offset {offset}: No valid JSON returned")
+
+    except Exception as e:
+        print(f"❌ Error at offset {offset}: {e}")
+        continue
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 refinement_prompt = PromptTemplate.from_template("""
 You are refining test cases using MetroPlus member handbooks.
