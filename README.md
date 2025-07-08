@@ -1,4 +1,54 @@
 import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+# --- Load Excel files ---
+check_df = pd.read_excel("check.xlsx")
+ground_truth_df = pd.read_excel("ground_truth.xlsx")
+
+# --- Use appropriate column names ---
+check_scenarios = check_df["TestScenario"].fillna("").astype(str).tolist()
+ground_truth_scenarios = ground_truth_df["TestScenario"].fillna("").astype(str).tolist()
+
+# --- Vectorize all scenarios using TF-IDF ---
+vectorizer = TfidfVectorizer().fit(check_scenarios + ground_truth_scenarios)
+check_vectors = vectorizer.transform(check_scenarios)
+ground_truth_vectors = vectorizer.transform(ground_truth_scenarios)
+
+# --- Calculate cosine similarity matrix ---
+similarity_matrix = cosine_similarity(check_vectors, ground_truth_vectors)
+
+# --- Match each check scenario to the most similar ground truth ---
+matches = []
+for i, sim_vector in enumerate(similarity_matrix):
+    best_match_index = sim_vector.argmax()
+    best_score = sim_vector[best_match_index]
+    match_info = {
+        "CheckTestScenario": check_scenarios[i],
+        "MatchedGroundTruthScenario": ground_truth_scenarios[best_match_index],
+        "SimilarityScore": best_score
+    }
+    matches.append(match_info)
+
+# --- Convert result to DataFrame and save to Excel ---
+result_df = pd.DataFrame(matches)
+result_df.to_excel("testcase_matches.xlsx", index=False)
+
+print("✅ Matching completed. Output saved to 'testcase_matches.xlsx'")
+
+
+
+
+
+
+
+
+
+
+
+
+
+import pandas as pd
 import json
 from langchain.prompts import PromptTemplate
 from langchain_groq import ChatGroq
