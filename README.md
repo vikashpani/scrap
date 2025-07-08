@@ -1,4 +1,24 @@
 
+
+
+
+
+
+
+
+
+
+response_text = res.content.strip().replace("```json", "").replace("```", "")
+
+        # Defensive check: Ensure non-empty and starts with '{' or '['
+        if response_text and (response_text.startswith("{") or response_text.startswith("[")):
+            parsed = json.loads(response_text)
+            if isinstance(parsed, list):
+                return parsed[0]  # take first item if list
+            return parsed  # single dict case
+        else:
+            print("⚠️ Empty or non-JSON response. Skipping refinement.")
+            return test_case
 import os
 import json
 import pandas as pd
