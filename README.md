@@ -1,3 +1,30 @@
+from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+member_docs = qdrant.similarity_search(
+    test_case['TestCaseObjective'],
+    k=CHUNKS_PER_TYPE,
+    offset=offset,
+    filter=Filter(
+        must=[
+            FieldCondition(
+                key="source_type",
+                match=MatchValue(value="member_book")
+            )
+        ]
+    )
+)
+
+
+
+
+
+
+
+
+
+
+
+
 def refine_with_member_book(qdrant, test_case):
     all_refined_outputs = []
 
