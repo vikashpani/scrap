@@ -1,3 +1,55 @@
+all_cases = []
+
+for offset in range(0, MAX_CHUNKS, CHUNKS_PER_TYPE):
+    print(f"🔄 Retrieving FDD+Rules chunks: Offset {offset}")
+    docs = qdrant.similarity_search(
+        query,
+        k=CHUNKS_PER_TYPE,
+        offset=offset,
+        filter={"source_type": {"$in": ["claims", "rules"]}}
+    )
+
+    if not docs:
+        continue
+
+    context = "\n\n".join(doc.page_content for doc in docs)
+    prompt = base_prompt.format(context=context)
+
+    try:
+        response = llm.invoke(prompt)
+        raw = response.content.strip().replace("```json", "").replace("```", "")
+
+        if raw and (raw.startswith("{") or raw.startswith("[")):
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                for case in parsed:
+                    refined = refine_with_member_book(qdrant, case)
+                    all_cases.append(refined)
+            else:
+                refined = refine_with_member_book(qdrant, parsed)
+                all_cases.append(refined)
+
+        else:
+            print(f"⚠️ Skipping offset {offset}: No valid JSON returned")
+
+    except Exception as e:
+        print(f"❌ Error at offset {offset}: {e}")
+        continue
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 base_cases = []
 
 for offset in range(0, MAX_CHUNKS, CHUNKS_PER_TYPE):
