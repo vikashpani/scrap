@@ -1,4 +1,28 @@
 
+refinement_prompt = PromptTemplate.from_template("""
+You are refining test cases using MetroPlus member handbooks.
+
+Given this test case:
+Objective: {objective}
+Steps: {steps}
+Expected: {expected}
+
+And the following Member Handbook content:
+{context}
+
+Refine or enrich the test case if needed based on the member handbook.
+
+Return only JSON in this format:
+[
+  {{
+    "TestCaseObjective": "...",
+    "HowToDo": "...",
+    "ExpectedOutcome": "..."
+  }}
+]
+
+Do not include any markdown, explanation, or extra text. Output ONLY valid JSON.
+""")
 
 
 
