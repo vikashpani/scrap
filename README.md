@@ -1,3 +1,72 @@
+def refine_with_member_book(qdrant, test_case):
+    all_refined_outputs = []
+
+    for offset in range(0, MAX_CHUNKS, CHUNKS_PER_TYPE):
+        member_docs = qdrant.similarity_search(
+            test_case['TestCaseObjective'],
+            k=CHUNKS_PER_TYPE,
+            offset=offset,
+            filter={"source_type": "member_book"}
+        )
+
+        if not member_docs:
+            print(f"⚠️ No member book chunks found at offset {offset}")
+            continue
+
+        context = "\n\n".join(doc.page_content for doc in member_docs)
+
+        prompt = refinement_prompt.format(
+            objective=test_case['TestCaseObjective'],
+            steps=test_case['HowToDo'],
+            expected=test_case['ExpectedOutcome'],
+            context=context
+        )
+
+        try:
+            res = llm.invoke(prompt)
+            response_text = res.content.strip().replace("```json", "").replace("```", "")
+
+            # Debug log (optional)
+            print(f"\n🔎 Refinement LLM response (offset {offset}):\n{response_text[:300]}...\n")
+
+            if response_text and (response_text.startswith("{") or response_text.startswith("[")):
+                parsed = json.loads(response_text)
+
+                # Append all valid refinements (assume list or dict)
+                if isinstance(parsed, list):
+                    all_refined_outputs.extend(parsed)
+                elif isinstance(parsed, dict):
+                    all_refined_outputs.append(parsed)
+                else:
+                    print(f"⚠️ Unrecognized JSON format at offset {offset}")
+
+        except Exception as e:
+            print(f"❌ Refinement failed at offset {offset}: {e}")
+            continue
+
+    # Return first valid refined output, or fallback to original
+    return all_refined_outputs[0] if all_refined_outputs else test_case
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 all_cases = []
 
 for offset in range(0, MAX_CHUNKS, CHUNKS_PER_TYPE):
