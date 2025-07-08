@@ -1,3 +1,180 @@
+
+import os
+import json
+import pandas as pd
+from langchain.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.embeddings import HuggingFaceBgeEmbeddings
+from langchain.vectorstores import Qdrant
+from qdrant_client import QdrantClient
+from langchain.prompts import PromptTemplate
+from langchain_groq import ChatGroq
+
+# === CONFIG ===
+GROQ_API_KEY = "your_groq_api_key_here"
+QDRANT_URL = "http://localhost:6333"
+COLLECTION_NAME = "fdd-testcases"
+CHUNKS_PER_TYPE = 5
+MODEL_NAME = "meta-llama/llama-4-maverick-17b-128e-instruct"
+
+# === FILES ===
+PDF_FILES = {
+    "claims": "data/FDD/Claims & Payment.pdf"
+}
+RULES_PDF = "data/FDD/Rules.pdf"
+MEMBER_FILES = [
+    "data/MBR-23.320_2023-MMC-Member-Handbook-Insert-Dental_2023_FINAL.pdf",
+    "data/MBR-24.015_2023-Mobile-Crisis-Telephonic-Triage-and-Response-Handbook.pdf",
+    "data/MBR-24.106-Final-HCBS-Handbook-Insert_FINAL-1.pdf",
+    "data/MBR-24-262-Family-planning-insert_MMC_FINAL.pdf",
+    "data/MBR-25.039-Doula-Services_Handbook-Insert_FINAL.pdf",
+    "data/MBR-25.133-CDSMP-For-Arthritis_Handbook-Insert_FINAL.pdf"
+]
+
+# === Step 1: Load and Chunk Documents ===
+print("\n📄 Loading and chunking documents...")
+documents = []
+
+# Load Rules
+loader = PyPDFLoader(RULES_PDF)
+for doc in loader.load():
+    doc.metadata["source_type"] = "rules"
+    documents.append(doc)
+
+# Load Claims FDD
+for name, path in PDF_FILES.items():
+    loader = PyPDFLoader(path)
+    for doc in loader.load():
+        doc.metadata["source_type"] = "claims"
+        documents.append(doc)
+
+# Load Member Handbook
+for path in MEMBER_FILES:
+    loader = PyPDFLoader(path)
+    for doc in loader.load():
+        doc.metadata["source_type"] = "member_book"
+        documents.append(doc)
+
+# Chunking
+text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=50)
+chunks = text_splitter.split_documents(documents)
+
+# === Step 2: Store in Qdrant ===
+print(f"\n🧠 Loaded {len(documents)} documents, split into {len(chunks)} chunks.")
+embedding_model = HuggingFaceBgeEmbeddings(model_name="BAAI/bge-large-en", model_kwargs={'device': 'cpu'})
+
+qdrant = Qdrant.from_documents(
+    documents=chunks,
+    embedding=embedding_model,
+    url=QDRANT_URL,
+    collection_name=COLLECTION_NAME
+)
+
+# === Step 3: Setup LLM and Prompt ===
+llm = ChatGroq(groq_api_key=GROQ_API_KEY, model_name=MODEL_NAME)
+
+base_prompt = PromptTemplate.from_template("""
+You are a test case generation engine for MetroPlus Health Plan.
+
+Given the following Claims FDD and Rules content:
+
+{context}
+
+Generate high-quality, non-redundant test cases. Each test case should include:
+- TestCaseObjective
+- HowToDo (2–3 bullet points)
+- ExpectedOutcome
+
+Return ONLY JSON in this format:
+[
+  {{
+    "TestCaseObjective": "...",
+    "HowToDo": "...",
+    "ExpectedOutcome": "..."
+  }}
+]
+""")
+
+refinement_prompt = PromptTemplate.from_template("""
+You are refining test cases using MetroPlus member handbooks.
+
+Given this test case:
+Objective: {objective}
+Steps: {steps}
+Expected: {expected}
+
+And the following Member Handbook content:
+
+{context}
+
+Refine or enrich the test case if needed. Return updated JSON format.
+""")
+
+# === Step 4: Helper Functions ===
+def retrieve_context(qdrant, query):
+    claims = qdrant.similarity_search(query, k=CHUNKS_PER_TYPE, filter={"source_type": "claims"})
+    rules = qdrant.similarity_search(query, k=CHUNKS_PER_TYPE, filter={"source_type": "rules"})
+    return claims + rules
+
+def refine_with_member_book(qdrant, test_case):
+    member_docs = qdrant.similarity_search(test_case['TestCaseObjective'], k=CHUNKS_PER_TYPE, filter={"source_type": "member_book"})
+    context = "\n\n".join(doc.page_content for doc in member_docs)
+    prompt = refinement_prompt.format(
+        objective=test_case['TestCaseObjective'],
+        steps=test_case['HowToDo'],
+        expected=test_case['ExpectedOutcome'],
+        context=context
+    )
+    try:
+        res = llm.invoke(prompt)
+        return json.loads(res.content.strip().replace("```json", "").replace("```", ""))[0]
+    except Exception as e:
+        print(f"⚠️ Skipping refinement due to error: {e}")
+        return test_case
+
+# === Step 5: Main Generation Loop ===
+for fdd_key in PDF_FILES:
+    print(f"\n🚀 Generating test cases for: {fdd_key}")
+    all_cases = []
+
+    query = f"Generate test cases from {fdd_key} FDD using Rules."
+    docs = retrieve_context(qdrant, query)
+    context = "\n\n".join(doc.page_content for doc in docs)
+    prompt = base_prompt.format(context=context)
+
+    try:
+        response = llm.invoke(prompt)
+        raw = response.content.strip().replace("```json", "").replace("```", "")
+        base_cases = json.loads(raw)
+
+        print(f"\n✅ Generated {len(base_cases)} base test cases. Refining...")
+        for case in base_cases:
+            refined = refine_with_member_book(qdrant, case)
+            all_cases.append(refined)
+
+        df = pd.DataFrame(all_cases)
+        output_file = f"TestCases_{fdd_key}_MPH.xlsx"
+        df.to_excel(output_file, index=False)
+        print(f"📦 Saved: {output_file}")
+
+    except Exception as e:
+        print(f"❌ Error generating test cases for {fdd_key}: {e}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
