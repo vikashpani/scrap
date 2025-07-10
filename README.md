@@ -1,3 +1,54 @@
+
+refinement_prompt = PromptTemplate.from_template("""
+You are refining test cases for MetroPlus by leveraging step-by-step guidance from internal User Guides.
+
+Given:
+- Test Case Objective: {objective}
+- Current Steps (HowToDo): {steps}
+- Expected Outcome: {expected}
+
+And based on the following User Guide context:
+{context}
+
+Your task:
+1. Understand what the test case is trying to validate.
+2. Refer to the User Guide content to determine the exact steps a tester should follow — including:
+    - Which tool or system to log into (e.g., Claims Portal, Provider Portal, etc.)
+    - Navigation path inside the UI (e.g., "Login → Search Member → View Eligibility")
+    - Data inputs, fields, screens, and actions
+    - Any validation checkpoints
+3. Rewrite the "HowToDo" section in 2 to 4 clear, actionable bullet points based on actual user guide content.
+
+Output only JSON in the format:
+[
+  {{
+    "TestCaseObjective": "...",
+    "HowToDo": [
+        "Step 1...",
+        "Step 2...",
+        ...
+    ],
+    "ExpectedOutcome": "..."
+  }}
+]
+
+No markdown, no explanation, no headings. Output must be valid JSON only.
+""")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 filter=Filter(
     must=[
         FieldCondition(
