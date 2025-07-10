@@ -1,4 +1,215 @@
 
+import os
+import json
+import pandas as pd
+from qdrant_client import QdrantClient
+from qdrant_client.models import Filter, FieldCondition, MatchValue
+from langchain.prompts import PromptTemplate
+from langchain_groq import ChatGroq
+from langchain.vectorstores import Qdrant
+
+# === CONFIG ===
+QDRANT_URL = "http://localhost:6333"
+COLLECTION_NAME = "fdd-testcases"
+GROQ_API_KEY = "your-groq-api-key"
+MODEL_NAME = "meta-llama/llama-4-maverick-17b-128e-instruct"
+CHUNKS_PER_TYPE = 5
+MAX_CHUNKS = 20
+
+# === LLM ===
+llm = ChatGroq(groq_api_key=GROQ_API_KEY, model_name=MODEL_NAME)
+
+# === Prompts ===
+
+extract_requirements_prompt = PromptTemplate.from_template("""
+You are analyzing an FDD chunk.
+
+Chunk content:
+{chunk}
+
+Extract and return only the **individual functional requirements** in plain English.
+Output JSON list like:
+["Requirement 1...", "Requirement 2...", ...]
+""")
+
+generate_testcases_prompt = PromptTemplate.from_template("""
+Given the following functional requirement:
+
+{requirement}
+
+Generate at least 2 non-redundant test cases with:
+- TestCaseObjective
+- ExpectedOutcome
+(Leave HowToDo as a placeholder like "To be refined")
+
+Output only JSON:
+[
+  {{
+    "TestCaseObjective": "...",
+    "HowToDo": ["To be refined"],
+    "ExpectedOutcome": "..."
+  }},
+  ...
+]
+""")
+
+refinement_prompt = PromptTemplate.from_template("""
+You are refining test cases using MetroPlus user guides.
+
+Test Case:
+- Objective: {objective}
+- Steps: {steps}
+- Expected: {expected}
+
+User Guide Context:
+{context}
+
+Update HowToDo with clear tool-based steps (login, screen nav, input fields, etc).
+
+Output valid JSON:
+[
+  {{
+    "TestCaseObjective": "...",
+    "HowToDo": ["...", "..."],
+    "ExpectedOutcome": "...",
+    "FunctionalRequirement": "{functional_requirement}"
+  }}
+]
+""")
+
+# === Qdrant VectorStore ===
+qdrant = Qdrant(
+    client=QdrantClient(url=QDRANT_URL),
+    collection_name=COLLECTION_NAME,
+    embedding=...  # your embedding model here
+)
+
+# === Step 1: Extract functional requirements ===
+def extract_requirements(fdd_chunk):
+    try:
+        prompt = extract_requirements_prompt.format(chunk=fdd_chunk)
+        res = llm.invoke(prompt)
+        raw = res.content.strip().replace("```json", "").replace("```", "")
+        return json.loads(raw)
+    except Exception as e:
+        print(f"❌ Requirement extraction failed: {e}")
+        return []
+
+# === Step 2: Generate test cases ===
+def generate_testcases(req_text):
+    try:
+        prompt = generate_testcases_prompt.format(requirement=req_text)
+        res = llm.invoke(prompt)
+        raw = res.content.strip().replace("```json", "").replace("```", "")
+        cases = json.loads(raw)
+        for c in cases:
+            c["FunctionalRequirement"] = req_text
+        return cases
+    except Exception as e:
+        print(f"❌ Testcase gen failed: {e}")
+        return []
+
+# === Step 3: Refine test cases ===
+def refine_testcase(tc, functional_req):
+    all_refined = []
+
+    for offset in range(0, MAX_CHUNKS, CHUNKS_PER_TYPE):
+        try:
+            docs = qdrant.similarity_search(
+                tc["TestCaseObjective"],
+                k=CHUNKS_PER_TYPE,
+                offset=offset,
+                filter=Filter(
+                    must=[FieldCondition(
+                        key="source_type",
+                        match=MatchValue(value="user_guide")
+                    )]
+                )
+            )
+
+            if not docs:
+                continue
+
+            context = "\n\n".join(d.page_content for d in docs)
+            prompt = refinement_prompt.format(
+                objective=tc["TestCaseObjective"],
+                steps="\n".join(tc["HowToDo"]),
+                expected=tc["ExpectedOutcome"],
+                context=context,
+                functional_requirement=functional_req
+            )
+            res = llm.invoke(prompt)
+            raw = res.content.strip().replace("```json", "").replace("```", "")
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict): parsed = [parsed]
+            all_refined.extend(parsed)
+        except Exception as e:
+            print(f"⚠️ Refinement error: {e}")
+            continue
+
+    if not all_refined:
+        tc["FunctionalRequirement"] = functional_req
+        return [tc]
+    return all_refined
+
+# === Step 4: Main Execution ===
+all_final_testcases = []
+
+# Step 4.1: Pull all FDD chunks (source_type = "claims")
+for offset in range(0, 100, CHUNKS_PER_TYPE):  # increase limit if needed
+    try:
+        docs = qdrant.similarity_search(
+            query="Generate test cases",
+            k=CHUNKS_PER_TYPE,
+            offset=offset,
+            filter=Filter(
+                must=[FieldCondition(
+                    key="source_type",
+                    match=MatchValue(value="claims")
+                )]
+            )
+        )
+
+        if not docs:
+            break
+
+        for doc in docs:
+            fdd_chunk = doc.page_content
+            requirements = extract_requirements(fdd_chunk)
+
+            for req in requirements:
+                print(f"\n🔍 Requirement: {req[:100]}...")
+                cases = generate_testcases(req)
+
+                for case in cases:
+                    refined = refine_testcase(case, req)
+                    all_final_testcases.extend(refined)
+
+    except Exception as e:
+        print(f"❌ Error retrieving FDD chunk: {e}")
+        break
+
+# === Step 5: Save to Excel ===
+df = pd.DataFrame(all_final_testcases)
+df.to_excel("FunctionalReq_TestCases_MetroPlus.xlsx", index=False)
+print(f"\n✅ All done. {len(df)} test cases written to Excel.")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 refinement_prompt = PromptTemplate.from_template("""
 You are refining test cases for MetroPlus by leveraging step-by-step guidance from internal User Guides.
 
