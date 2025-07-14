@@ -1,3 +1,64 @@
+import re
+
+def extract_requirements_from_chunk(text):
+    """
+    Extracts functional and non-functional requirement blocks from a chunk,
+    starting with lines containing 'FR', 'NFR', or similar patterns.
+    """
+    lines = text.splitlines()
+    blocks = []
+    current_block = []
+    capturing = False
+
+    for line in lines:
+        clean_line = line.strip()
+
+        # Match FR/NFR at the start or middle of line (case-insensitive)
+        is_new_req = bool(re.match(r"^(FR|NFR)[\.\s\-:]*\d*.*", clean_line, re.IGNORECASE)) or \
+                     bool(re.match(r"^.*\b(fr|nfr)\b.*", clean_line, re.IGNORECASE))
+
+        # Start new block
+        if is_new_req:
+            if current_block:
+                blocks.append(" ".join(current_block))
+                current_block = []
+            capturing = True
+            current_block.append(clean_line)
+
+        elif capturing:
+            # Continue capturing bullets, subpoints, or non-empty informative lines
+            if re.match(r"^\d+[\.\)]", clean_line) or clean_line:
+                current_block.append(clean_line)
+            else:
+                if current_block:
+                    blocks.append(" ".join(current_block))
+                    current_block = []
+                capturing = False
+
+    if current_block:
+        blocks.append(" ".join(current_block))
+
+    return blocks
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import os
 import json
