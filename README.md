@@ -1,5 +1,55 @@
 import re
 
+def extract_fr_nfr_requirements(text):
+    """
+    Extracts all functional (FR) and non-functional (NFR) requirements from a full text chunk,
+    using regular expressions. Handles multi-line blocks and various formats like 'FR 1.1', 'fr.', 'NFR', etc.
+    """
+    # This regex captures:
+    # - FR or NFR (any case), possibly followed by a number (e.g., FR 1.2, NFR.4)
+    # - Followed by text until the next 'FR', 'NFR', or end of chunk
+    pattern = re.compile(
+        r"""(?i)               # case-insensitive
+        \b(FR|NFR)             # match 'FR' or 'NFR'
+        [\.\s\-:]*             # optional dot, space, dash, or colon
+        (\d+[\.\d]*)?          # optional number or decimal (e.g., 2.1, 1.2.3)
+        (.*?)                  # non-greedy match for description
+        (?=\bFR|\bNFR|$)       # until next FR/NFR or end of string
+        """,
+        re.IGNORECASE | re.DOTALL | re.VERBOSE
+    )
+
+    matches = pattern.findall(text)
+
+    # Reformat to extract cleaned-up blocks
+    requirements = []
+    for m in matches:
+        tag = m[0].upper()
+        number = m[1]
+        content = m[2].strip()
+        full_text = f"{tag} {number}".strip() + ": " + content
+        requirements.append(full_text.strip())
+
+    return requirements
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import re
+
 def extract_requirements_from_chunk(text):
     """
     Extracts functional and non-functional requirement blocks from a chunk,
