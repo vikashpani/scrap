@@ -1,3 +1,10 @@
+\b(FR|NFR)[\.\s:-]*(\d+(?:[\.\-]\d+)*)?[\s:-]*(.*?)(?=\bFR|\bNFR|$)
+
+
+
+
+
+
 import re
 
 def extract_fr_nfr_requirements(text):
