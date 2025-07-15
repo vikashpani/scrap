@@ -1,3 +1,34 @@
+import pdfplumber
+import difflib
+
+def extract_text_from_pdf(path):
+    text = ""
+    with pdfplumber.open(path) as pdf:
+        for page in pdf.pages:
+            text += page.extract_text() + "\n"
+    return text
+
+def compare_pdfs(file1, file2):
+    text1 = extract_text_from_pdf(file1).splitlines()
+    text2 = extract_text_from_pdf(file2).splitlines()
+
+    diff = difflib.unified_diff(text1, text2, fromfile='File1', tofile='File2', lineterm='')
+    for line in diff:
+        print(line)
+
+# Example usage
+compare_pdfs("a.pdf", "b.pdf")
+
+
+
+
+
+
+
+
+
+
+
 import fitz  # PyMuPDF
 import difflib
 
