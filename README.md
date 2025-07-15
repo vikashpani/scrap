@@ -2,6 +2,52 @@ import pdfplumber
 import difflib
 
 def extract_text_from_pdf(path):
+    """Extract full text from a PDF file, page by page."""
+    text = []
+    with pdfplumber.open(path) as pdf:
+        for page in pdf.pages:
+            content = page.extract_text()
+            if content:
+                text.extend(content.splitlines())
+    return text
+
+def generate_html_diff(file1_path, file2_path, output_html="pdf_diff_output.html"):
+    text1 = extract_text_from_pdf(file1_path)
+    text2 = extract_text_from_pdf(file2_path)
+
+    d = difflib.HtmlDiff(tabsize=4, wrapcolumn=100)
+    html_diff = d.make_file(text1, text2, fromdesc='File A', todesc='File B')
+
+    with open(output_html, "w", encoding="utf-8") as f:
+        f.write(html_diff)
+
+    print(f"✅ Diff saved to: {output_html}")
+
+# Example usage:
+generate_html_diff("a.pdf", "b.pdf")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import pdfplumber
+import difflib
+
+def extract_text_from_pdf(path):
     text = ""
     with pdfplumber.open(path) as pdf:
         for page in pdf.pages:
