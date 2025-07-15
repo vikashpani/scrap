@@ -1,4 +1,55 @@
 import pdfplumber
+import fitz  # PyMuPDF
+import difflib
+
+def extract_page_text(pdf_path):
+    """Extract text per page as a list of lines."""
+    with pdfplumber.open(pdf_path) as pdf:
+        return [page.extract_text().splitlines() if page.extract_text() else [] for page in pdf.pages]
+
+def mark_differences_on_pdf(original_pdf, modified_pdf, output_pdf="annotated_diff.pdf"):
+    original_lines = extract_page_text(original_pdf)
+    modified_lines = extract_page_text(modified_pdf)
+
+    doc = fitz.open(original_pdf)
+
+    for page_num, (orig_lines, mod_lines) in enumerate(zip(original_lines, modified_lines)):
+        page = doc[page_num]
+        sm = difflib.SequenceMatcher(None, orig_lines, mod_lines)
+        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+            if tag == 'replace' or tag == 'delete':
+                for i in range(i1, i2):
+                    if i < len(orig_lines):
+                        line_text = orig_lines[i]
+                        highlight_text_on_page(page, line_text, color=(1, 0, 0))  # Red for deleted/replaced
+            if tag == 'insert':
+                for j in range(j1, j2):
+                    if j < len(mod_lines):
+                        line_text = mod_lines[j]
+                        highlight_text_on_page(page, line_text, color=(0, 1, 0))  # Green for inserted
+
+    doc.save(output_pdf)
+    print(f"✅ Annotated diff saved to: {output_pdf}")
+
+def highlight_text_on_page(page, search_text, color=(1, 0, 0)):
+    """Highlight all occurrences of a text on a given PDF page."""
+    found = page.search_for(search_text)
+    for rect in found:
+        highlight = page.add_highlight_annot(rect)
+        highlight.set_colors(stroke=color)  # RGB
+        highlight.update()
+
+# Example usage
+mark_differences_on_pdf("a.pdf", "b.pdf")
+
+
+
+
+
+
+
+
+import pdfplumber
 import difflib
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
