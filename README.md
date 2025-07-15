@@ -1,6 +1,69 @@
 import fitz  # PyMuPDF
 import difflib
 
+def extract_line_blocks(pdf_path):
+    doc = fitz.open(pdf_path)
+    pages = []
+    for page in doc:
+        lines = []
+        text_dict = page.get_text("dict")
+        for block in text_dict["blocks"]:
+            for line in block.get("lines", []):
+                line_text = " ".join([span["text"] for span in line["spans"]]).strip()
+                if line_text:
+                    rect = fitz.Rect(line["bbox"])
+                    lines.append((line_text, rect))
+        pages.append(lines)
+    return pages
+
+def compute_diffs(lines_a, lines_b):
+    diffs = []
+    max_pages = max(len(lines_a), len(lines_b))
+    for i in range(max_pages):
+        a_lines = [l[0] for l in lines_a[i]] if i < len(lines_a) else []
+        b_lines = [l[0] for l in lines_b[i]] if i < len(lines_b) else []
+        diff = list(difflib.ndiff(a_lines, b_lines))
+        diffs.append(diff)
+    return diffs
+
+def draw_diff_rectangles(pdf_path_b, lines_b, diffs, output_path):
+    doc = fitz.open(pdf_path_b)
+    for i, diff_page in enumerate(diffs):
+        if i >= len(doc):
+            continue
+        page = doc[i]
+        b_line_map = [line[0] for line in lines_b[i]] if i < len(lines_b) else []
+        b_rect_map = {line[0]: line[1] for line in lines_b[i]} if i < len(lines_b) else {}
+
+        for line in diff_page:
+            if line.startswith("+ "):  # Added in B
+                text = line[2:]
+                rect = b_rect_map.get(text)
+                if rect:
+                    page.draw_rect(rect, color=(0, 1, 0), width=1.2)  # Green
+            elif line.startswith("- "):  # Missing in B
+                # We skip drawing on B’s page since it's not there, or optionally show in margin
+                pass
+            elif line.startswith("? "):
+                continue
+    doc.save(output_path)
+    print(f"✅ In-place visual diff PDF saved to: {output_path}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+import fitz  # PyMuPDF
+import difflib
+
 # Step 1: Extract lines from PDF pages
 def extract_pdf_lines(pdf_path):
     doc = fitz.open(pdf_path)
