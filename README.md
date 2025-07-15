@@ -1,3 +1,86 @@
+import fitz  # PyMuPDF
+import difflib
+
+# Step 1: Extract lines from PDF pages
+def extract_pdf_lines(pdf_path):
+    doc = fitz.open(pdf_path)
+    all_lines = []
+    for page in doc:
+        blocks = page.get_text("blocks")  # Each block: (x0, y0, x1, y1, text, block_no, block_type)
+        blocks = sorted(blocks, key=lambda b: (b[1], b[0]))  # Sort by vertical (Y), then horizontal (X)
+        lines = [b[4].strip() for b in blocks if b[4].strip()]
+        all_lines.append(lines)
+    return all_lines
+
+# Step 2: Compare each page's lines using difflib.ndiff
+def compute_diffs(lines_a, lines_b):
+    diffs_per_page = []
+    max_pages = max(len(lines_a), len(lines_b))
+    for i in range(max_pages):
+        page_a = lines_a[i] if i < len(lines_a) else []
+        page_b = lines_b[i] if i < len(lines_b) else []
+        diff = list(difflib.ndiff(page_a, page_b))
+        diffs_per_page.append(diff)
+    return diffs_per_page
+
+# Step 3: Write the diffs visually on the PDF
+def generate_visual_diff(base_pdf_path, diffs_per_page, output_path):
+    doc = fitz.open(base_pdf_path)
+    while len(doc) < len(diffs_per_page):
+        doc.insert_page(-1)
+
+    for i, diff_lines in enumerate(diffs_per_page):
+        page = doc[i]
+        y = 50  # Start Y position to annotate diffs
+        for line in diff_lines:
+            if line.startswith('- '):       # Removed in new PDF
+                page.insert_text((50, y), line, fontsize=10, color=(1, 0, 0))   # Red
+                y += 12
+            elif line.startswith('+ '):     # Added in new PDF
+                page.insert_text((50, y), line, fontsize=10, color=(0, 0.6, 0))  # Green
+                y += 12
+            elif line.startswith('? '):     # Change hint (e.g., ^^^^^^^)
+                continue  # Skip or log
+            else:                          # Unchanged
+                page.insert_text((50, y), line, fontsize=10, color=(0.3, 0.3, 0.3))  # Grey
+                y += 12
+
+    doc.save(output_path)
+    print(f"✅ Diff report saved as: {output_path}")
+
+# Step 4: Run the diffing
+def run_pdf_diff(pdf_path_a, pdf_path_b, output_pdf_path):
+    print("🔍 Extracting text from PDFs...")
+    lines_a = extract_pdf_lines(pdf_path_a)
+    lines_b = extract_pdf_lines(pdf_path_b)
+
+    print("🧠 Computing differences...")
+    diffs = compute_diffs(lines_a, lines_b)
+
+    print("🖍️ Generating visual diff PDF...")
+    generate_visual_diff(pdf_path_b, diffs, output_pdf_path)
+
+# 🧪 Example usage
+if __name__ == "__main__":
+    pdf_a = "a.pdf"              # Old version
+    pdf_b = "b.pdf"              # New version
+    output_pdf = "diff_output.pdf"
+    run_pdf_diff(pdf_a, pdf_b, output_pdf)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 \b(FR|NFR)[\.\s:-]*(\d+(?:[\.\-]\d+)*)?[\s:-]*(.*?)(?=\bFR|\bNFR|$)
 
 
