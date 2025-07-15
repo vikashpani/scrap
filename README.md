@@ -1,5 +1,73 @@
 import pdfplumber
 import difflib
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import inch
+
+def extract_text_lines(pdf_path):
+    lines = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            content = page.extract_text()
+            if content:
+                lines.extend(content.splitlines())
+    return lines
+
+def write_diff_to_pdf(file1, file2, output_pdf="pdf_text_diff_report.pdf"):
+    text1 = extract_text_lines(file1)
+    text2 = extract_text_lines(file2)
+
+    diff = difflib.unified_diff(text1, text2, fromfile=file1, tofile=file2, lineterm="")
+
+    c = canvas.Canvas(output_pdf, pagesize=A4)
+    width, height = A4
+    y = height - inch
+    max_lines = int(height / 12) - 2
+    line_count = 0
+
+    for line in diff:
+        if line.startswith('+'):
+            c.setFillColorRGB(0, 0.5, 0)  # Green
+        elif line.startswith('-'):
+            c.setFillColorRGB(0.8, 0, 0)  # Red
+        elif line.startswith('@'):
+            c.setFillColorRGB(0, 0, 0.6)  # Blue
+        else:
+            c.setFillColorRGB(0, 0, 0)    # Black
+
+        c.drawString(40, y, line[:120])  # Prevent overflow
+        y -= 12
+        line_count += 1
+
+        if y < 40:
+            c.showPage()
+            y = height - inch
+            line_count = 0
+
+    c.save()
+    print(f"✅ PDF diff saved to: {output_pdf}")
+
+# Example usage
+write_diff_to_pdf("a.pdf", "b.pdf")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import pdfplumber
+import difflib
 
 def extract_text_from_pdf(path):
     """Extract full text from a PDF file, page by page."""
