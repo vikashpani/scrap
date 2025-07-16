@@ -1,3 +1,28 @@
+Hi Team,
+
+I’d like to schedule a quick walkthrough session to demonstrate the new automation tool we’ve developed for comparing MetroPlus documents.
+
+This tool helps us:
+
+Automate PDF comparisons between data and template documents
+
+Visualize differences in HTML format
+
+Map multiple file pairs at once and process them in batches
+
+Manage mappings efficiently (add, remove, or clear all)
+
+
+
+
+
+
+
+
+
+
+
+
 
 import streamlit as st
 import os
