@@ -1,3 +1,66 @@
+# app.py
+import streamlit as st
+import os
+from glob import glob
+from validation import generate_html_diff
+
+# Constants
+DATA_FOLDER = "data"
+TEMPLATE_FOLDER = "templates"
+OUTPUT_FOLDER = "out"
+
+# Ensure output folder exists
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+# Page title
+st.set_page_config(page_title="PDF Diff Tool", layout="wide")
+st.title("📄 PDF Diff Tool (MetroPlus Validation)")
+
+# List PDFs from folders
+data_files = [os.path.basename(f) for f in glob(os.path.join(DATA_FOLDER, "*.pdf"))]
+template_files = [os.path.basename(f) for f in glob(os.path.join(TEMPLATE_FOLDER, "*.pdf"))]
+
+if not data_files or not template_files:
+    st.warning("❗ Make sure both 'data/' and 'templates/' folders contain PDF files.")
+    st.stop()
+
+# UI: Dropdowns
+file1 = st.selectbox("📁 Choose PDF from 'data' folder", data_files)
+file2 = st.selectbox("📑 Choose PDF from 'templates' folder", template_files)
+
+# Button
+if st.button("🔍 Compare PDFs"):
+    path1 = os.path.join(DATA_FOLDER, file1)
+    path2 = os.path.join(TEMPLATE_FOLDER, file2)
+
+    # Get common base name for output
+    base1 = os.path.splitext(file1)[0]
+    base2 = os.path.splitext(file2)[0]
+    common = os.path.commonprefix([base1, base2]) or base1
+    output_path = os.path.join(OUTPUT_FOLDER, f"{common}.html")
+
+    try:
+        generate_html_diff(path1, path2, output_path)
+        st.success(f"✅ Diff saved: {output_path}")
+
+        # Show HTML in iframe
+        with open(output_path, 'r', encoding='utf-8') as f:
+            html = f.read()
+        st.components.v1.html(html, height=900, scrolling=True)
+    except Exception as e:
+        st.error(f"❌ Failed to generate diff: {e}")
+
+
+
+
+
+
+
+
+
+
+
+
 import pdfplumber
 import fitz  # PyMuPDF
 import difflib
