@@ -1,3 +1,104 @@
+
+import streamlit as st
+import os
+import json
+import re
+from glob import glob
+from validation import generate_html_diff
+
+DATA_FOLDER = "data"
+TEMPLATE_FOLDER = "templates"
+OUTPUT_FOLDER = "out"
+MAPPING_FILE = "mapping.json"
+
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+# Load or initialize mapping
+if os.path.exists(MAPPING_FILE):
+    with open(MAPPING_FILE, "r") as f:
+        file_mappings = json.load(f)
+else:
+    file_mappings = []
+
+st.set_page_config(page_title="📑 PDF Compare (Batch)", layout="wide")
+st.title("📄 MetroPlus PDF Comparison Tool")
+
+# Load PDF files (case-insensitive)
+def get_pdfs(folder):
+    return [f for f in os.listdir(folder) if re.search(r"\.pdf$", f, re.IGNORECASE)]
+
+data_files = get_pdfs(DATA_FOLDER)
+template_files = get_pdfs(TEMPLATE_FOLDER)
+
+st.subheader("📥 Select File Pairs to Map")
+
+col1, col2 = st.columns(2)
+with col1:
+    data_file = st.selectbox("Select a PDF from 'data' folder", data_files)
+with col2:
+    template_file = st.selectbox("Select a PDF from 'templates' folder", template_files)
+
+pair = {"data": data_file, "template": template_file}
+
+col3, col4 = st.columns(2)
+with col3:
+    if st.button("➕ Add Mapping"):
+        if pair not in file_mappings:
+            file_mappings.append(pair)
+            with open(MAPPING_FILE, "w") as f:
+                json.dump(file_mappings, f, indent=2)
+            st.success(f"✅ Mapping added: {data_file} ↔ {template_file}")
+        else:
+            st.warning("⚠️ This mapping already exists.")
+
+with col4:
+    if st.button("🧹 Clear Selected Mapping"):
+        if pair in file_mappings:
+            file_mappings.remove(pair)
+            with open(MAPPING_FILE, "w") as f:
+                json.dump(file_mappings, f, indent=2)
+            st.success(f"🧹 Removed: {data_file} ↔ {template_file}")
+        else:
+            st.warning("⚠️ Mapping not found.")
+
+if st.button("🗑️ Clear All Mappings"):
+    file_mappings.clear()
+    with open(MAPPING_FILE, "w") as f:
+        json.dump(file_mappings, f, indent=2)
+    st.success("🗑️ All mappings cleared.")
+
+st.subheader("📋 Current Mappings")
+if not file_mappings:
+    st.info("No mappings added yet.")
+else:
+    for i, pair in enumerate(file_mappings):
+        st.write(f"{i+1}. `{pair['data']}` ⟷ `{pair['template']}`")
+
+if st.button("🚀 Generate All Comparisons"):
+    for pair in file_mappings:
+        file1_path = os.path.join(DATA_FOLDER, pair["data"])
+        file2_path = os.path.join(TEMPLATE_FOLDER, pair["template"])
+        base1 = os.path.splitext(pair["data"])[0]
+        base2 = os.path.splitext(pair["template"])[0]
+        common = os.path.commonprefix([base1, base2]) or f"{base1}_{base2}"
+        output_path = os.path.join(OUTPUT_FOLDER, f"{common}.html")
+
+        try:
+            generate_html_diff(file1_path, file2_path, output_path)
+            st.success(f"✅ Compared: `{pair['data']}` ↔ `{pair['template']}` → `{common}.html`")
+        except Exception as e:
+            st.error(f"❌ Error comparing {pair['data']} & {pair['template']}: {e}")
+
+
+
+
+
+
+
+
+
+
+
 import streamlit as st
 import os
 import json
