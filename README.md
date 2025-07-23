@@ -1,4 +1,105 @@
 import os
+from langchain.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.schema import HumanMessage
+from langchain.chat_models import ChatGroq  # or ChatOpenAI
+import pandas as pd
+
+# === Settings ===
+PDF_FOLDER = "/mnt/data/pdfs"  # your PDF folder
+OUTPUT_EXCEL = "/mnt/data/hiv_snp_chunks.xlsx"
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+llm = ChatGroq(api_key=GROQ_API_KEY, model="llama3-8b-8192")
+
+
+# === Step 1: Extract and chunk PDF ===
+def load_and_chunk_pdf(pdf_path):
+    loader = PyPDFLoader(pdf_path)
+    docs = loader.load()
+
+    splitter = RecursiveCharacterTextSplitter(chunk_size=700, chunk_overlap=150)
+    chunks = splitter.split_documents(docs)
+    return chunks
+
+
+# === Step 2: Ask LLM if chunk is about HIV SNP compensation ===
+def is_relevant_chunk(text):
+    prompt = f"""
+You are reading a section of a provider contract.
+
+Your job is to answer if this text contains compensation-related information 
+for HIV SNP (Special Need Plan) services.
+
+Text:
+\"\"\"
+{text}
+\"\"\"
+
+If yes, extract any service descriptions and rates or codes. Otherwise say "Not relevant".
+"""
+    response = llm([HumanMessage(content=prompt)])
+    return response.content.strip()
+
+
+# === Step 3: Process a single PDF ===
+def process_pdf(pdf_path):
+    chunks = load_and_chunk_pdf(pdf_path)
+    results = []
+
+    for i, chunk in enumerate(chunks):
+        print(f"🔍 Checking chunk {i+1}/{len(chunks)}")
+        answer = is_relevant_chunk(chunk.page_content)
+
+        if "not relevant" not in answer.lower():
+            results.append({
+                "Chunk Index": i,
+                "Chunk Preview": chunk.page_content[:150],
+                "Extracted Info": answer.strip()
+            })
+
+    return results
+
+
+# === Step 4: Process all PDFs and write to Excel ===
+def process_all_pdfs(pdf_folder, output_excel):
+    data_per_pdf = {}
+    for file in os.listdir(pdf_folder):
+        if file.lower().endswith(".pdf"):
+            file_path = os.path.join(pdf_folder, file)
+            print(f"\n📄 Processing: {file}")
+            results = process_pdf(file_path)
+            if results:
+                df = pd.DataFrame(results)
+                sheet_name = os.path.splitext(file)[0][:31]  # Excel limit
+                data_per_pdf[sheet_name] = df
+
+    # Save to Excel
+    with pd.ExcelWriter(output_excel, engine="openpyxl") as writer:
+        for sheet_name, df in data_per_pdf.items():
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+    print(f"\n✅ Output saved to: {output_excel}")
+
+
+# === Run It ===
+if __name__ == "__main__":
+    process_all_pdfs(PDF_FOLDER, OUTPUT_EXCEL)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import os
 import fitz  # PyMuPDF
 import pandas as pd
 from langchain.chat_models import ChatGroq
