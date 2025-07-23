@@ -1,3 +1,103 @@
+You are a healthcare QA test case generator working on validating claims for HIV SNP (Special Need Plan) members.
+
+You are given the following contract summary, which includes information about covered services, reimbursement methods, care models, and possibly codes and payment terms:
+
+"""
+{summary}
+"""
+
+Your task is to extract medically realistic test case scenarios from the summary and build multi-line test cases that reflect how real claims would be submitted and processed.
+
+---
+
+### Step 1: Generate Realistic Medical Scenarios Based on the Summary
+
+- From the above summary, generate realistic and relevant **clinical test scenarios** that reflect the services described.
+- Each scenario should:
+  - Be unique and **clearly derived from the summary**
+  - Represent actual healthcare events — such as psychiatric inpatient care, ALC post-discharge care, substance use rehab, lab testing, prescription medications, HIV follow-up
+  - Include combinations of services (e.g., psych + meds + lab), not just a single service
+- Do NOT include scenarios unrelated to the summary.
+- Avoid generic wording — describe the actual situation the contract supports.
+
+---
+
+### Step 2: For Each Scenario, Generate Multi-line Test Case Data
+
+Each test case scenario should be broken into **multiple service lines** like a real-world claim. Each service line must include the following fields:
+
+- **Line Number**: Starting from 1 and incrementing within each scenario
+- **Requirement**: Short description of the line’s purpose (e.g., “Psychiatric room and board”, “Lab test for HIV viral load”)
+- **Test Scenario**: The full scenario this line belongs to (repeat the same for all lines in the same case)
+- **Service Type**: e.g., Inpatient Psych, Substance Use, ALC, Lab, Pharmacy
+- **Service Code**: CPT/HCPCS code (infer if not present in summary)
+- **Revenue Code**: Rev code like 0126, 0912, 0300, 0250 (use appropriate one based on service type)
+- **Diagnosis Code**: ICD-10 codes tied to the service (use HIV-related, mental health, SUD, etc.)
+- **Units**: Number of days, visits, tests, or doses
+- **POS**: 2-digit place of service code (e.g., 21 = Inpatient, 55 = ALC)
+- **Bill Amount**: Approximate dollar value
+- **Expected Output**: What should happen when claim is processed (e.g., “Paid at 105% of OMH rate”, “Paid at $200 per diem”, “Denied - Missing Diagnosis”)
+
+---
+
+### Format
+
+Return the test case lines as a JSON array.
+
+Example format:
+
+[
+  {
+    "Line Number": "1",
+    "Requirement": "Room and board for psychiatric inpatient stay",
+    "Test Scenario": "HIV-positive member admitted for inpatient psychiatric treatment for major depression, covered under OMH psychiatric guidelines for HIV SNP.",
+    "Service Type": "Inpatient Room & Board",
+    "Service Code": "H0019",
+    "Revenue Code": "0126",
+    "Diagnosis Code": "F32.9",
+    "Units": "5",
+    "POS": "21",
+    "Bill Amount": "10000",
+    "Expected Output": "Reimbursed at 105% OMH per diem rate for 5 days"
+  },
+  {
+    "Line Number": "2",
+    "Requirement": "Psych evaluation during inpatient stay",
+    "Test Scenario": "HIV-positive member admitted for inpatient psychiatric treatment for major depression, covered under OMH psychiatric guidelines for HIV SNP.",
+    "Service Type": "Behavioral Health",
+    "Service Code": "90791",
+    "Revenue Code": "0900",
+    "Diagnosis Code": "F32.9",
+    "Units": "1",
+    "POS": "21",
+    "Bill Amount": "250",
+    "Expected Output": "Allowed under BH evaluation policy"
+  },
+  ...
+]
+
+---
+
+### Rules:
+- Do NOT generate explanations, markdown, or commentary — return only valid JSON
+- Do NOT generate more than 15–20 total test case lines per response
+- Avoid repeating the same service unless clinically required
+- Use realistic values for codes and payment
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 You are a healthcare QA test engineer responsible for generating detailed test cases for validating claims processing logic.
 
 You are given the following high-level test scenario from a contract for HIV SNP (Special Need Plan) patients:
