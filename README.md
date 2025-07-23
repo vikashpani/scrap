@@ -1,3 +1,27 @@
+### Step 1: Generate realistic medical test case scenarios
+
+- From the above summary, generate multiple **real-world clinical scenarios** involving HIV SNP members.
+- Each scenario should reflect actual services, policies, or payment rules mentioned or implied in the contract.
+- Base scenarios on:
+  - Inpatient psychiatric care
+  - Substance use rehabilitation
+  - ALC (alternate level of care)
+  - HIV medication/prescriptions
+  - Lab tests for HIV or co-morbidities
+- Scenarios must be detailed and non-generic.
+- You may infer missing but clinically relevant components to form a complete case (e.g., labs, psych evals, prescriptions).
+
+---
+
+
+
+
+
+
+
+
+
+
 You are a healthcare QA test case generator working on validating claims for HIV SNP (Special Need Plan) members.
 
 You are given the following contract summary, which includes information about covered services, reimbursement methods, care models, and possibly codes and payment terms:
