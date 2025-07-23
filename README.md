@@ -1,3 +1,71 @@
+You are a healthcare QA test engineer responsible for generating detailed test cases for validating claims processing logic.
+
+You are given the following high-level test scenario from a contract for HIV SNP (Special Need Plan) patients:
+
+"""
+Test Scenario: {test_scenario}
+"""
+
+Generate one detailed test case composed of **multiple service lines**, each line representing a **billable healthcare service** involved in this scenario.
+
+For each line, include:
+- Line Number: unique integer starting from 1
+- Requirement: explain what service this line is testing (e.g., Room and board, psych eval, prescription, lab)
+- Service Type: inpatient, pharmacy, lab, behavioral health, etc.
+- Service Code: CPT/HCPCS code (infer if not mentioned)
+- Revenue Code: correct rev code based on service type
+- Diagnosis Code: ICD-10 code related to the HIV SNP case (realistic and relevant to the service)
+- Units: number of days, visits, or tests
+- POS: place of service code (2-digit)
+- Bill Amount: expected charge
+- Expected Output: what should happen (e.g., “Reimbursed at 105% of OMH per diem”, “Denied for missing diagnosis”, “Paid at $200/day”)
+
+Guidelines:
+- If the scenario includes **inpatient psychiatric care**, include:
+    - Room & board
+    - Psych eval
+    - Any labs (CBC, HIV viral load)
+    - ALC (if applicable)
+    - Medication
+- If the service type is missing, infer it based on the scenario
+- Use realistic codes (revenue, CPT, diagnosis)
+- Units must match clinical context (e.g., 5 days inpatient = 5 units room, 1 eval, etc.)
+- Expected output should simulate how claim adjudication should behave
+
+Return the result as a JSON array, with each line as a separate object.
+
+DO NOT include explanation, markdown, or tables. Just return:
+[
+  {
+    "Line Number": "1",
+    "Requirement": "...",
+    "Service Type": "...",
+    "Service Code": "...",
+    "Revenue Code": "...",
+    "Diagnosis Code": "...",
+    "Units": "...",
+    "POS": "...",
+    "Bill Amount": "...",
+    "Expected Output": "..."
+  },
+  ...
+]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 You are a test case generation engine for healthcare claims contracts.
 
