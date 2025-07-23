@@ -1,4 +1,116 @@
 import os
+import pandas as pd
+from langchain.schema import HumanMessage
+from langchain.chat_models import ChatGroq  # or ChatOpenAI
+from io import StringIO
+
+# === Configuration ===
+INPUT_EXCEL = "/mnt/data/hiv_snp_chunks.xlsx"
+OUTPUT_EXCEL = "/mnt/data/hiv_snp_testcases.xlsx"
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+llm = ChatGroq(api_key=GROQ_API_KEY, model="llama3-8b-8192")
+
+
+# === Step 1: Summarize Extracted Info ===
+def summarize_contract_info(extracted_texts):
+    joined = "\n---\n".join(extracted_texts)
+    prompt = f"""
+You are reviewing multiple extracted paragraphs from a provider contract.
+These were marked as possibly related to compensation for HIV SNP services.
+
+Please read all the following and generate a concise but comprehensive summary, combining key points, including:
+- HIV SNP-related services offered
+- Reimbursement models
+- Any service/revenue/diagnosis codes mentioned
+- Rates or per-diem values
+- Limitations or units (e.g., # of days)
+
+Keep all useful context intact.
+
+Text:
+\"\"\"
+{joined}
+\"\"\"
+"""
+    response = llm([HumanMessage(content=prompt)])
+    return response.content.strip()
+
+
+# === Step 2: Generate Test Cases from Summary ===
+def generate_testcases(summary):
+    prompt = f"""
+You are generating test cases for claims testing based on the following provider contract summary:
+
+\"\"\"
+{summary}
+\"\"\"
+
+Generate structured test cases as CSV rows with these fields:
+Test Scenario,Service Type,Service Code,Revenue Code,Diagnosis Code,Units,POS,Bill Amount,Expected Output
+
+Use realistic values. Infer codes or amounts if not explicitly present.
+"""
+    response = llm([HumanMessage(content=prompt)])
+    return response.content.strip()
+
+
+# === Main Driver ===
+def process_all_sheets(input_excel, output_excel):
+    xl = pd.ExcelFile(input_excel)
+    result_sheets = {}
+
+    for sheet in xl.sheet_names:
+        print(f"📄 Processing: {sheet}")
+        df = xl.parse(sheet)
+
+        # Filter valid "Extracted Info"
+        extracted_blocks = df["Extracted Info"].dropna().tolist()
+        extracted_blocks = [b for b in extracted_blocks if "not relevant" not in b.lower()]
+
+        if not extracted_blocks:
+            continue
+
+        # Step 1: Summarize all chunks
+        summary = summarize_contract_info(extracted_blocks)
+        print(f"🧠 Summary for {sheet}:\n{summary[:500]}...\n")
+
+        # Step 2: Generate test cases
+        csv_output = generate_testcases(summary)
+
+        try:
+            test_df = pd.read_csv(StringIO(csv_output))
+            result_sheets[sheet] = test_df
+        except Exception as e:
+            print(f"⚠️ Failed to parse test case output for {sheet}: {e}")
+            continue
+
+    # Save output to Excel
+    with pd.ExcelWriter(output_excel, engine="openpyxl") as writer:
+        for sheet, df in result_sheets.items():
+            df.to_excel(writer, sheet_name=sheet[:31], index=False)
+
+    print(f"\n✅ Test cases written to: {output_excel}")
+
+
+# === Run ===
+if __name__ == "__main__":
+    process_all_sheets(INPUT_EXCEL, OUTPUT_EXCEL)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import os
 from langchain.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import HumanMessage
