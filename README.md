@@ -1,3 +1,87 @@
+
+You are a test case generation engine for healthcare claims contracts.
+
+You are provided with a summary extracted from a provider contract that covers service information, reimbursement policies, and any relevant data. Your job is to generate highly detailed, realistic test cases for HIV Special Need Plan (SNP) claims.
+
+Use the information below to generate test case scenarios:
+"""
+(summary)
+"""
+
+Instructions:
+
+1. Generate as many **non-redundant** test case scenarios as possible based on the provided summary.
+2. Each test case should include detailed service lines and coding logic, not just high-level bullets.
+3. If a service does not have explicitly listed codes or units, intelligently infer them based on standard industry knowledge and HIV SNP care delivery practices.
+4. Each test case should contain **multiple lines** if applicable (e.g., Room & Board, Substance Use Rehab, Prescription codes).
+5. Include alternate levels of care (ALC), psychiatric inpatient, and substance use services if applicable.
+6. Base the logic on combinations of: service types, reimbursement models (e.g., 105% OMH per diem, $200/day), service codes, and diagnosis relevance.
+
+Return the output ONLY in this format, as a list of JSON objects:
+
+[
+  {
+    "Line Number": "1",
+    "Requirement": "Inpatient psychiatric treatment for HIV-positive patient under OMH guidelines",
+    "Test Scenario": "Verify that inpatient psychiatric services for HIV SNP member are reimbursed at 105% of OMH private psychiatric hospital per diem. Patient admitted for depressive disorder.",
+    "Service Type": "Behavioral Health - Inpatient",
+    "Service Code": "H0019",
+    "Revenue Code": "0126",
+    "Diagnosis Code": "F32.9",
+    "Units": "8",
+    "POS": "21",
+    "Bill Amount": "16800",
+    "Expected Output": "Expected to process at 105% of per diem for 8 days"
+  },
+  {
+    "Line Number": "2",
+    "Requirement": "Alternate Level of Care (ALC) after psych treatment",
+    "Test Scenario": "Validate that the patient placed under Alternate Level of Care is reimbursed at $200 per diem after inpatient psychiatric discharge.",
+    "Service Type": "ALC - Room and Board",
+    "Service Code": "S9484",
+    "Revenue Code": "0169",
+    "Diagnosis Code": "Z59.0",
+    "Units": "5",
+    "POS": "55",
+    "Bill Amount": "1000",
+    "Expected Output": "Expected to process at $200 per diem for 5 days"
+  },
+  {
+    "Line Number": "3",
+    "Requirement": "Substance abuse rehab services for HIV SNP patient",
+    "Test Scenario": "Check that HIV SNP patient receiving drug rehab therapy is reimbursed using behavioral health and rehab codes. Treatment spans 15 days.",
+    "Service Type": "Behavioral Health - Substance Use",
+    "Service Code": "H2036",
+    "Revenue Code": "0912",
+    "Diagnosis Code": "F14.10",
+    "Units": "15",
+    "POS": "21",
+    "Bill Amount": "6000",
+    "Expected Output": "Expected to process at 105% per diem rate"
+  }
+]
+
+Rules:
+- Do not repeat or generalize any test case.
+- Do not return markdown, tables, or explanations.
+- Include only relevant test lines with codes that would actually appear in a 837I/837P claim.
+- Return maximum 10-15 scenarios if applicable. Less if only a few services are listed.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import os
 import pandas as pd
 from langchain.schema import HumanMessage
