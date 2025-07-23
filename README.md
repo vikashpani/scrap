@@ -1,3 +1,118 @@
+import os
+import fitz  # PyMuPDF
+import pandas as pd
+from langchain.chat_models import ChatGroq
+from langchain.schema import HumanMessage
+from openpyxl import Workbook
+
+# === Configuration ===
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # or set manually here
+PDF_FOLDER = "/path/to/pdf_folder"  # change this
+OUTPUT_EXCEL = "hiv_snp_extraction.xlsx"
+
+llm = ChatGroq(api_key=GROQ_API_KEY, model="llama3-8b-8192")
+
+
+# === 1. Extract full text from PDF ===
+def extract_text_from_pdf(pdf_path):
+    text = ""
+    with fitz.open(pdf_path) as doc:
+        for page in doc:
+            text += page.get_text()
+    return text
+
+
+# === 2. Extract only Compensation section ===
+def extract_compensation_section(text):
+    lines = text.split("\n")
+    compensation_text = []
+    inside = False
+    for line in lines:
+        if "compensation" in line.lower():
+            inside = True
+        elif inside and any(kw in line.lower() for kw in ["section", "exhibit", "appendix", "termination", "provider manual"]):
+            break
+        elif inside:
+            compensation_text.append(line.strip())
+    return "\n".join(compensation_text)
+
+
+# === 3. Ask LLM to extract only HIV SNP services from compensation ===
+def extract_hiv_snp_services(comp_text):
+    prompt = f"""
+You are a contract analyst.
+
+Given this compensation section from a provider agreement:
+
+--- START ---
+{comp_text}
+--- END ---
+
+Please extract ONLY the services that are related to the HIV Special Need Plan (HIV SNP). 
+Do not include anything unrelated.
+
+Return as:
+- Service name
+- Rate or reimbursement detail (if present)
+- Any notes or codes mentioned
+"""
+    try:
+        response = llm([HumanMessage(content=prompt)])
+        return response.content.strip()
+    except Exception as e:
+        return f"Error: {e}"
+
+
+# === 4. Main pipeline ===
+def process_all_pdfs_and_store(pdf_folder, output_excel_path):
+    all_data = {}
+    for filename in os.listdir(pdf_folder):
+        if not filename.lower().endswith(".pdf"):
+            continue
+        path = os.path.join(pdf_folder, filename)
+        print(f"🔍 Processing {filename}")
+        raw_text = extract_text_from_pdf(path)
+        comp_text = extract_compensation_section(raw_text)
+        if not comp_text:
+            print(f"⚠️ No compensation section found in {filename}")
+            continue
+        hiv_snp_data = extract_hiv_snp_services(comp_text)
+        sheet_name = os.path.splitext(filename)[0][:31]  # Excel limit
+        all_data[sheet_name] = hiv_snp_data
+
+    # Save to Excel
+    with pd.ExcelWriter(output_excel_path, engine="openpyxl") as writer:
+        for sheet, content in all_data.items():
+            df = pd.DataFrame({"HIV SNP Services Extracted": [content]})
+            df.to_excel(writer, sheet_name=sheet, index=False)
+
+    print(f"✅ Saved to {output_excel_path}")
+
+
+# === Run it ===
+if __name__ == "__main__":
+    process_all_pdfs_and_store(PDF_FOLDER, OUTPUT_EXCEL)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Hi Team,
 
 I’d like to schedule a quick walkthrough session to demonstrate the new automation tool we’ve developed for comparing MetroPlus documents.
