@@ -1,3 +1,151 @@
+
+import os
+import json
+import pandas as pd
+from langchain.schema import HumanMessage
+from langchain.chat_models import ChatGroq
+
+# === Configuration ===
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # Set this in your environment
+MODEL_NAME = "llama3-8b-8192"
+SUMMARY_INPUT = "summary.txt"  # Path to your contract summary
+OUTPUT_EXCEL = "generated_testcases.xlsx"
+
+llm = ChatGroq(api_key=GROQ_API_KEY, model=MODEL_NAME)
+
+# === Prompt Template ===
+BASE_PROMPT = """
+You are a healthcare QA test engineer responsible for generating realistic test cases for validating claims processing logic in HIV Special Needs Plan (SNP) contracts.
+
+You are given the following contract summary which includes services, payment terms, and care guidelines:
+
+\"\"\"{summary}\"\"\"
+
+Your task is to extract medically valid, realistic test scenarios from the contract summary and generate detailed, multi-line test cases that reflect how real-world HIV SNP claims would be constructed and adjudicated.
+
+Step 1: Generate distinct clinical test scenarios
+
+- Identify as many non-redundant and realistic scenarios as possible (minimum 6–8, but aim for more).
+- Scenarios should reflect contract-specific policies for:
+    - Inpatient psychiatric care
+    - Substance use detox and rehab
+    - Alternate Level of Care (ALC)
+    - HIV medications and prescriptions
+    - Lab diagnostics related to HIV or comorbidities
+- Scenarios should be complete, non-generic, and clinically valid
+- Infer missing details like prescriptions, labs, or services that are clinically expected in such a scenario
+
+Step 2: For each test scenario, generate a multi-line test case object
+
+Each test case should be broken into multiple service lines (3–5). Each line must include:
+
+- "Test Scenario": A descriptive summary (2–3 full sentences) explaining what the overall scenario is validating
+- "Line Number": Integer starting from 1
+- "Requirement": What service or rule is being tested (e.g., Room & Board, HIV lab, RX billing)
+- "Service Type": E.g., Inpatient, Pharmacy, Lab, Behavioral Health, Rehab
+- "Service Code": CPT or HCPCS code (generate if missing)
+- "Revenue Code": Realistic rev code (generate if missing)
+- "Diagnosis Code": Realistic ICD-10 (e.g., F43.10, B20, Z21)
+- "Units": Days, tests, or prescriptions based on context
+- "POS": 2-digit place of service code (e.g., 21 for inpatient, 11 for office)
+- "Billed Amount": Realistic cost in dollars
+- "Expected Output": Expected system behavior (e.g., 'Reimbursed at 105% per diem', 'Denied for missing diagnosis', 'Priced per unit')
+
+Guidelines:
+- If scenario includes inpatient care, ensure:
+    - Room & board
+    - Psych eval
+    - Labs (HIV viral load, CBC)
+    - Medications
+    - ALC if stated
+- Ensure units match the scenario (e.g., 5 inpatient days, 1 eval, 2 prescriptions)
+- Ensure codes (rev, CPT, diag) are clinically appropriate
+- Ensure "Expected Output" is realistic per payer logic (e.g., approved/denied/priced at % rate)
+
+{instruction}
+
+Return the result as a single flat JSON array of line items. Each object must contain:
+{ "Test Scenario", "Line Number", "Requirement", "Service Type", "Service Code", "Revenue Code", "Diagnosis Code", "Units", "POS", "Billed Amount", "Expected Output" }
+
+No markdown. No explanations. No example.
+"""
+
+INSTRUCTION_VARIANTS = [
+    "Generate as many primary test scenarios as possible",
+    "Generate additional test scenarios that are clinically realistic and not previously covered",
+    "Generate edge-case or non-obvious test scenarios based on the same summary"
+]
+
+
+# === LLM Call ===
+def call_llm(summary, instruction):
+    prompt = BASE_PROMPT.format(summary=summary, instruction=instruction)
+    print(f"📤 Sending: {instruction}")
+    response = llm([HumanMessage(content=prompt)])
+    try:
+        return json.loads(response.content.strip())
+    except json.JSONDecodeError:
+        print("⚠️  JSON parsing failed. Skipping this block.")
+        return []
+
+
+# === Deduplication ===
+def deduplicate(testcases):
+    seen = set()
+    deduped = []
+    for tc in testcases:
+        key = json.dumps(tc, sort_keys=True)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(tc)
+    return deduped
+
+
+# === Excel Writer ===
+def write_to_excel(testcases, output_path):
+    df = pd.DataFrame(testcases)
+    df.to_excel(output_path, index=False)
+    print(f"✅ Saved test cases to Excel: {output_path}")
+
+
+# === Main Pipeline ===
+def main():
+    if not os.path.exists(SUMMARY_INPUT):
+        print(f"❌ Summary file not found: {SUMMARY_INPUT}")
+        return
+
+    with open(SUMMARY_INPUT, "r", encoding="utf-8") as f:
+        summary = f.read().strip()
+
+    all_testcases = []
+    for instruction in INSTRUCTION_VARIANTS:
+        cases = call_llm(summary, instruction)
+        all_testcases.extend(cases)
+
+    final_testcases = deduplicate(all_testcases)
+    write_to_excel(final_testcases, OUTPUT_EXCEL)
+
+
+# === Run ===
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ### Step 1: Generate realistic medical test case scenarios
 
 - From the above summary, generate multiple **real-world clinical scenarios** involving HIV SNP members.
