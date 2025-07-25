@@ -1,3 +1,49 @@
+def refine_test_case_group(llm, group, summary):
+    prompt = f"""
+You are a healthcare QA automation engineer tasked with refining and expanding claim test cases for HIV SNP contracts.
+
+Below is the contract summary, followed by partial claim service lines already identified:
+
+Contract Summary:
+\"\"\"
+{summary}
+\"\"\"
+
+Partial Claim Service Lines:
+{json.dumps(group, indent=2)}
+
+Instructions:
+- Carefully analyze the existing lines and summary.
+- Expand each group into a full care path (minimum 5-6 service lines), maintaining medical realism.
+- Consider adding medically expected components:
+  - Room & board, psych evaluation, labs (CBC, HIV viral load), medications, prescriptions, follow-up behavioral health.
+- Use SDOH-based billing if summary doesn’t provide rates.
+- Do not remove or change existing lines — only **add** new ones as clinically needed.
+- Align codes:
+  - CPT/HCPCS for service
+  - ICD-10 for diagnosis
+  - Revenue code by service type
+  - POS (place of service) – inferred if not in summary
+- Return a refined list of all lines in this scenario group.
+
+Final Output Format (JSON list of dicts): each line should contain fields:
+[\"Test Scenario\", \"Line Number\", \"Requirement\", \"Service Main Category\", \"Service Type\", \"Service Code\", \"Revenue Code\", \"Diagnosis Code\", \"Units\", \"POS\", \"Bill Amount\", \"Expected Output\"]
+"""
+    response = llm([HumanMessage(content=prompt)])
+    return json.loads(response.content)
+
+
+
+
+
+
+
+
+
+
+
+
+
 You are a healthcare QA test engineer responsible for generating detailed test cases for claims processing validation. You are given the following MetroPlus Health Edge provider contract summary related to HIV Special Needs Plan (SNP) claims:
 
 """
