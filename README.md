@@ -1,3 +1,103 @@
+import pandas as pd
+import json
+from langchain.schema import HumanMessage
+
+# === Step 1: Group test cases by scenario ===
+def group_test_lines(df):
+    grouped = []
+    current_scenario = None
+    current_group = []
+
+    for _, row in df.iterrows():
+        if row['Line Number'] == 1 and current_group:
+            grouped.append(current_group)
+            current_group = []
+        current_group.append(row.to_dict())
+
+    if current_group:
+        grouped.append(current_group)
+
+    return grouped
+
+# === Step 2: Refine each grouped test case with LLM ===
+def refine_test_case_group(llm, group, summary):
+    prompt = f"""
+You are a healthcare QA automation expert. You are given a contract summary and an initial set of test case service lines for an HIV SNP claim.
+
+Your job is to expand this into a more complete and medically realistic scenario with at least 5-6 sequential clinical service lines.
+
+Contract Summary:
+"""
+{summary}
+"""
+
+Existing Test Scenario:
+"""
+{group[0]['Test Scenario']}
+"""
+
+Initial Claim Lines:
+{json.dumps(group, indent=2)}
+
+Use the clinical context and fill in additional service lines using:
+- ICD-10 diagnosis codes
+- HCPCS/CPT codes
+- Revenue codes
+- Realistic units (e.g. 5 days inpatient, 1 lab test)
+- POS codes
+- Bill Amounts: Use rates from summary, if not present use realistic SDOH reimbursement values.
+- Maintain the original Line 1 info, and build out the sequence logically.
+
+All new lines must match the test scenario’s disease and care model. Include missing services like labs, psych evals, medications, prescriptions, if not already present.
+
+Return only a list of JSON objects per service line, with the same fields:
+[Test Scenario, Line Number, Requirement, Service Main Category, Service Type, Service Code, Revenue Code, Diagnosis Code, Units, POS, Bill Amount, Expected Output]
+"""
+
+    response = llm([HumanMessage(content=prompt)])
+    return json.loads(response.content)
+
+# === Step 3: Run the refinement ===
+def refine_testcases_with_llm(llm, df, summary):
+    groups = group_test_lines(df)
+    all_refined = []
+
+    for group in groups:
+        try:
+            refined = refine_test_case_group(llm, group, summary)
+            all_refined.extend(refined)
+        except Exception as e:
+            print(f"⚠️ Failed to refine group: {e}")
+            all_refined.extend(group)  # Fallback to original
+
+    return pd.DataFrame(all_refined)
+
+# === Usage ===
+# df = pd.read_excel("testcase_output.xlsx")
+# summary = open("contract_summary.txt").read()
+# from langchain.chat_models import ChatGroq
+# llm = ChatGroq(api_key="sk-xxx", model="llama3-8b-8192")
+# df_refined = refine_testcases_with_llm(llm, df, summary)
+# df_refined.to_excel("refined_testcases.xlsx", index=False)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def refine_test_case_group(llm, group, summary):
     prompt = f"""
 You are a healthcare QA automation engineer tasked with refining and expanding claim test cases for HIV SNP contracts.
