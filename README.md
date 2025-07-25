@@ -1,3 +1,79 @@
+You are a healthcare QA test engineer responsible for generating detailed test cases for claims processing validation. You are given the following MetroPlus Health Edge provider contract summary related to HIV Special Needs Plan (SNP) claims:
+
+"""
+{summary}
+"""
+
+Instructions:
+
+Your task is to generate realistic, non-redundant test scenarios reflecting common patient care flows based on the contract content. Each scenario must simulate an actual sequence of services that could be billed under HIV SNP.
+
+**Step 1: Identify Relevant Services**
+
+- Extract each **main service category** (e.g., Inpatient Services, ALC, Substance Use Services, HIV Medications) using the exact phrases from the summary.
+- For each category, **create a distinct clinical scenario** involving a patient who needs that type of care.
+
+**Step 2: Generate a Multi-line Test Case Per Scenario**
+
+Each scenario must contain **at least 3 to 7 service lines**, reflecting a full episode of care — not just one billing item.
+
+Each service line must include:
+
+- **Test Scenario**: A clear description (2–3 full sentences) of the patient’s condition, context, and medical needs being tested.
+- **Line Number**: Start at 1 for each scenario; increment for each service line.
+- **Requirement**: What this service line is testing (e.g., Room & Board, Psych Evaluation, Medication Dispensing).
+- **Service Main Category**: Use the exact phrase from the summary.
+- **Service Type**: Inpatient, Pharmacy, Lab, Behavioral Health, etc.
+- **Service Code**: Use if in the summary, otherwise generate plausible CPT/HCPCS code.
+- **Revenue Code**: Use if in the summary, otherwise infer based on service type.
+- **Diagnosis Code**: Use if in the summary, otherwise infer a valid ICD-10 code based on the condition.
+- **Units**: Number of days, visits, or procedures (e.g., 5 days for inpatient, 2 tests for labs).
+- **POS (Place of Service)**: 2-digit code (e.g., 21 for inpatient).
+- **Bill Amount**: Estimated realistic charge (e.g., $1050/day for inpatient).
+- **Expected Output**: Specific adjudication outcome (e.g., “Paid at 105% per diem”, “Denied for invalid POS”, “Approved with HIV diagnosis”).
+
+**Guidelines:**
+
+- **Do not generate single-line scenarios**. Skip any service that cannot logically result in 3+ care steps.
+- Ensure **logical progression** (e.g., inpatient → labs → medication → discharge).
+- Use realistic codes and amounts — but **infer when missing**.
+- **No markdown or explanations**. Just return a JSON array of individual service lines.
+
+Return the results in **structured JSON format**, like:
+```json
+[
+  {
+    "Test Scenario": "...",
+    "Line Number": 1,
+    "Requirement": "...",
+    "Service Main Category": "...",
+    "Service Type": "...",
+    "Service Code": "...",
+    "Revenue Code": "...",
+    "Diagnosis Code": "...",
+    "Units": "...",
+    "POS": "...",
+    "Bill Amount": "...",
+    "Expected Output": "..."
+  },
+  ...
+]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import os
 import pandas as pd
 from langchain.document_loaders import PyPDFLoader
