@@ -1,4 +1,23 @@
 import re
+
+response = llm([HumanMessage(content=prompt)])
+raw = response.content.strip()
+
+# Step 1: Remove any triple quotes or markdown code blocks
+cleaned = re.sub(r"^['`]{3,}(json)?", "", raw.strip(), flags=re.IGNORECASE)
+cleaned = re.sub(r"['`]{3,}$", "", cleaned.strip())
+
+# Step 2: Save cleaned output to text file
+with open("llm_response_raw.txt", "w", encoding="utf-8") as f:
+    f.write(cleaned)
+
+
+
+
+
+
+
+import re
 import json
 
 def safe_parse_llm_output(raw_output):
