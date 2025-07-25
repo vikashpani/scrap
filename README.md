@@ -1,3 +1,35 @@
+import re
+
+def safe_parse_llm_output(raw_output):
+    try:
+        # Attempt to fix common issues: single quotes, trailing commas, etc.
+        fixed = raw_output.replace("'", '"')
+        fixed = re.sub(r",\s*}", "}", fixed)
+        fixed = re.sub(r",\s*]", "]", fixed)
+        return json.loads(fixed)
+    except Exception as e:
+        print("⚠️ JSON parsing failed:", e)
+        print("Raw output:", raw_output[:500])
+        raise
+
+...
+
+# in refine_test_case_group:
+return safe_parse_llm_output(response.content)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import pandas as pd
 import json
 from langchain.schema import HumanMessage
