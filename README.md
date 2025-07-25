@@ -1,4 +1,42 @@
 import re
+import json
+
+def safe_parse_llm_output(raw_output):
+    try:
+        # Remove any code block markers or markdown
+        raw_output = raw_output.strip()
+        raw_output = re.sub(r'^```json', '', raw_output, flags=re.IGNORECASE).strip()
+        raw_output = re.sub(r'^```', '', raw_output).strip()
+        raw_output = re.sub(r'```$', '', raw_output).strip()
+
+        # Fix single quotes → double quotes
+        raw_output = raw_output.replace("'", '"')
+
+        # Remove trailing commas
+        raw_output = re.sub(r",\s*}", "}", raw_output)
+        raw_output = re.sub(r",\s*]", "]", raw_output)
+
+        # Final load
+        return json.loads(raw_output)
+    
+    except Exception as e:
+        print("❌ JSON parsing failed.")
+        print("🔎 Error:", e)
+        print("🔢 First 500 chars of raw output:\n", raw_output[:500])
+        raise
+
+
+
+
+
+
+
+
+
+
+
+
+import re
 
 def safe_parse_llm_output(raw_output):
     try:
