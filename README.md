@@ -1,3 +1,166 @@
+import os
+import pandas as pd
+from langchain.document_loaders import PyPDFLoader
+from langchain.schema import Document
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.chat_models import ChatGroq
+from langchain.embeddings import HuggingFaceBgeEmbeddings
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams, PointStruct
+from pdf2image import convert_from_path
+import pytesseract
+
+# === Configuration ===
+PDF_FOLDER = "data"
+OUTPUT_EXCEL = "out/hiv_snp_chunks_247.xlsx"
+GROQ_API_KEY = "sk-FMRPDOPALtXxy1Hp1XPrwGdyb3FYY2318330NGAzZ1VdtsMU911р"
+COLLECTION_NAME = "hiv_snp_chunks"
+QDRANT_HOST = "localhost"
+EMBEDDING_MODEL = "BAAI/bge-small-en"
+
+llm = ChatGroq(api_key=GROQ_API_KEY, model="meta-llama/llama-4-maverick-17b-128e-instruct")
+embedding = HuggingFaceBgeEmbeddings(model_name=EMBEDDING_MODEL)
+qdrant_client = QdrantClient(QDRANT_HOST)
+
+# === Step 0: OCR Fallback ===
+def fallback_ocr_loader(pdf_path):
+    images = convert_from_path(pdf_path)
+    all_text = ""
+    for i, img in enumerate(images):
+        try:
+            text = pytesseract.image_to_string(img)
+            all_text += f"\nPage {i+1}:\n{text}"
+        except Exception as e:
+            print(f"⚠️ OCR failed on page {i+1}: {e}")
+    return [Document(page_content=all_text)]
+
+# === Step 1: Load, Chunk, Embed and Store in Qdrant ===
+def load_and_chunk_pdf(pdf_path):
+    try:
+        loader = PyPDFLoader(pdf_path)
+        docs = loader.load()
+    except:
+        docs = fallback_ocr_loader(pdf_path)
+
+    if not docs or not docs[0].page_content.strip():
+        docs = fallback_ocr_loader(pdf_path)
+
+    splitter = RecursiveCharacterTextSplitter(chunk_size=700, chunk_overlap=150)
+    chunks = splitter.split_documents(docs)
+    return chunks
+
+def store_chunks_in_qdrant(chunks):
+    vectors = embedding.embed_documents([chunk.page_content for chunk in chunks])
+    points = [
+        PointStruct(id=i, vector=vec, payload={"text": chunk.page_content})
+        for i, (vec, chunk) in enumerate(zip(vectors, chunks))
+    ]
+    qdrant_client.recreate_collection(
+        collection_name=COLLECTION_NAME,
+        vectors_config=VectorParams(size=len(vectors[0]), distance=Distance.COSINE)
+    )
+    qdrant_client.upload_points(collection_name=COLLECTION_NAME, points=points)
+
+# === Step 2: Search Qdrant using Threshold ===
+def query_qdrant_relevant_chunks(query, threshold=0.75, top_k=50):
+    query_vector = embedding.embed_query(query)
+    results = qdrant_client.search(
+        collection_name=COLLECTION_NAME,
+        query_vector=query_vector,
+        limit=top_k,
+        score_threshold=threshold
+    )
+    return [res.payload["text"] for res in results]
+
+# === Step 3: Extract Relevant Info from LLM ===
+def is_relevant_chunk(text):
+    prompt = f"""
+You are reading a section of a provider contract.
+
+Your job is to answer if this text contains compensation-related information 
+for HIV SNP (Special Need Plan) services.
+
+Text:
+"""
+{text}
+"""
+
+If yes, extract any service descriptions and rates or codes. Otherwise say "Not relevant".
+"""
+    response = llm([Document(content=prompt)])
+    return response.content.strip()
+
+# === Step 4: Process All PDFs ===
+def process_all_pdfs(pdf_folder, output_excel):
+    data_per_pdf = {}
+
+    for file in os.listdir(pdf_folder):
+        if file.lower().endswith(".pdf"):
+            file_path = os.path.join(pdf_folder, file)
+            print(f"\n📄 Processing: {file}")
+
+            chunks = load_and_chunk_pdf(file_path)
+            store_chunks_in_qdrant(chunks)
+
+            top_chunks = query_qdrant_relevant_chunks(
+                query="HIV SNP services in compensation/payment sections",
+                threshold=0.75,
+                top_k=50
+            )
+
+            results = []
+            for i, chunk in enumerate(top_chunks):
+                print(f"🔍 Validating chunk {i+1}/{len(top_chunks)}")
+                answer = is_relevant_chunk(chunk)
+                if "not relevant" not in answer.lower():
+                    results.append({
+                        "Chunk Index": i,
+                        "Chunk Preview": chunk[:150],
+                        "Extracted Info": answer
+                    })
+
+            if results:
+                df = pd.DataFrame(results)
+                sheet_name = os.path.splitext(file)[0][:31]
+                data_per_pdf[sheet_name] = df
+
+    # Save to Excel
+    if data_per_pdf:
+        with pd.ExcelWriter(output_excel, engine="openpyxl") as writer:
+            for sheet_name, df in data_per_pdf.items():
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+        print(f"\n✅ Output saved to: {output_excel}")
+    else:
+        print("❌ No relevant content found in any file.")
+
+# === Run ===
+if __name__ == "__main__":
+    process_all_pdfs(PDF_FOLDER, OUTPUT_EXCEL)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import os
 import json
