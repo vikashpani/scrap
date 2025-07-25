@@ -1,3 +1,9 @@
+cleaned = re.sub(r"^```(?:json)?|```$", "", cleaned.strip(), flags=re.IGNORECASE)
+
+
+
+
+
 import re
 
 response = llm([HumanMessage(content=prompt)])
