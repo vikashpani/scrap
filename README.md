@@ -1,3 +1,46 @@
+
+import re
+import json
+
+# Assume `raw` is your original LLM output
+raw = response.content.strip()
+
+# Remove markdown-style backticks or other noise
+raw = raw.replace("```json", "").replace("```", "").strip()
+
+# Extract JSON block from first `[` to last `]`
+match = re.search(r"\[.*\]", raw, re.DOTALL)
+if match:
+    json_text = match.group(0)
+    
+    # Optional: Save for debugging
+    with open("out/llm_extracted_json.txt", "w", encoding="utf-8") as f:
+        f.write(json_text)
+
+    try:
+        parsed = json.loads(json_text)
+    except json.JSONDecodeError as e:
+        print("JSON parsing failed:", e)
+        parsed = None
+else:
+    print("No JSON array found in LLM response.")
+    parsed = None
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 cleaned = re.sub(r"^```(?:json)?|```$", "", cleaned.strip(), flags=re.IGNORECASE)
 
 
