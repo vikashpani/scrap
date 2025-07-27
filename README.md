@@ -2,6 +2,48 @@
 import re
 import json
 
+raw = response.content.strip()
+
+# Remove any triple quotes and markdown
+raw = raw.replace("```json", "").replace("```", "").strip()
+raw = re.sub(r"^[']{3,}", "", raw)
+raw = re.sub(r"[']{3,}$", "", raw)
+
+# Extract only the part that looks like a JSON list
+match = re.search(r"\[.*\]", raw, re.DOTALL)
+
+if match:
+    json_str = match.group(0).strip()
+    print("🔍 JSON preview:", json_str[:100])
+    with open("out/llm_json_clean.txt", "w", encoding="utf-8") as f:
+        f.write(json_str)
+    try:
+        parsed = json.loads(json_str)
+    except json.JSONDecodeError as e:
+        print("❌ JSON parse failed:", e)
+else:
+    print("❌ No JSON structure found.")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import re
+import json
+
 # Assume `raw` is your original LLM output
 raw = response.content.strip()
 
