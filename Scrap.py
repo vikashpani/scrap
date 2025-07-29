@@ -1,0 +1,175 @@
+import streamlit as st
+import os
+import tempfile
+import json
+import pandas as pd
+import re
+
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
+from langchain.embeddings import HuggingFaceBgeEmbeddings
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.schema import HumanMessage
+from langchain.chat_models import AzureChatOpenAI
+from langchain_groq import ChatGroq
+from langchain.document_loaders import PyPDFLoader
+from pdf2image import convert_from_path
+import pytesseract
+
+# Configuration
+QDRANT_HOST = "localhost"
+COLLECTION_NAME = "hiv_snp_chunks"
+embedding_model = HuggingFaceBgeEmbeddings(model_name="BAAI/bge-large-en", model_kwargs={"device": "cpu"})
+qdrant = QdrantClient(QDRANT_HOST)
+
+# OCR fallback
+def fallback_ocr_loader(pdf_path):
+    images = convert_from_path(pdf_path)
+    all_text = ""
+    for i, img in enumerate(images):
+        try:
+            text = pytesseract.image_to_string(img)
+            all_text += f"\nPage {i+1}\n{text}"
+        except Exception as e:
+            print(f"OCR failed on page {i+1}: {e}")
+    return all_text
+
+# Load and chunk PDF
+def load_and_chunk_pdf(pdf_path):
+    try:
+        loader = PyPDFLoader(pdf_path)
+        docs = loader.load()
+    except:
+        docs = [fallback_ocr_loader(pdf_path)]
+    if not docs or not docs[0].page_content.strip():
+        docs = [fallback_ocr_loader(pdf_path)]
+    splitter = RecursiveCharacterTextSplitter(chunk_size=700, chunk_overlap=150)
+    return splitter.split_documents(docs)
+
+# Store chunks in Qdrant with file name tag
+def store_chunks_in_qdrant(chunks, filename):
+    vectors = embedding_model.embed_documents([chunk.page_content for chunk in chunks])
+    points = [
+        PointStruct(
+            id=i,
+            vector=vec,
+            payload={"text": chunk.page_content, "filename": filename}
+        )
+        for i, (vec, chunk) in enumerate(zip(vectors, chunks))
+    ]
+    qdrant.recreate_collection(
+        collection_name=COLLECTION_NAME,
+        vectors_config=VectorParams(size=len(vectors[0]), distance=Distance.COSINE)
+    )
+    qdrant.upload_points(collection_name=COLLECTION_NAME, points=points)
+
+# Query Qdrant for relevant chunks
+def query_relevant_chunks(query, filename, threshold=0.75, top_k=30):
+    query_vector = embedding_model.embed_query(query)
+    results = qdrant.search(
+        collection_name=COLLECTION_NAME,
+        query_vector=query_vector,
+        limit=top_k,
+        query_filter=Filter(
+            must=[FieldCondition(key="filename", match=MatchValue(value=filename))]
+        ),
+        score_threshold=threshold
+    )
+    return [res.payload["text"] for res in results]
+
+# Choose LLM client
+def get_llm_client(source, groq_key=None, azure_key=None, azure_url=None, azure_deployment=None):
+    if source == "Groq":
+        return ChatGroq(api_key=groq_key, model="meta-llama/llama-4-scout-17b-16e-instruct")
+    else:
+        return AzureChatOpenAI(
+            azure_endpoint=azure_url,
+            openai_api_key=azure_key,
+            deployment_name=azure_deployment,
+            model_name="gpt-4o",
+            api_version="2025-01-01-preview"
+        )
+
+# Streamlit App
+st.title("📄 HIV SNP Test Case Generator")
+
+with st.sidebar:
+    st.header("⚙️ LLM Settings")
+    llm_source = st.selectbox("LLM Provider", ["Groq", "Azure OpenAI"])
+    groq_key = st.text_input("Groq API Key", type="password")
+    azure_key = st.text_input("Azure API Key", type="password")
+    azure_url = st.text_input("Azure Endpoint")
+    azure_deployment = st.text_input("Azure Deployment (e.g. gpt-4o)")
+
+uploaded_files = st.file_uploader("Upload PDF files", type="pdf", accept_multiple_files=True)
+
+if uploaded_files:
+    for uploaded in uploaded_files:
+        with st.spinner(f"Processing {uploaded.name}..."):
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                tmp.write(uploaded.read())
+                chunks = load_and_chunk_pdf(tmp.name)
+                store_chunks_in_qdrant(chunks, uploaded.name)
+            st.success(f"{uploaded.name} indexed successfully with {len(chunks)} chunks.")
+
+    query = st.text_area("Enter your query", value="HIV SNP services in compensation/payment sections")
+
+    if st.button("Generate Summary & Test Cases"):
+        for uploaded in uploaded_files:
+            st.subheader(f"📄 {uploaded.name}")
+            relevant_chunks = query_relevant_chunks(query, uploaded.name)
+            if not relevant_chunks:
+                st.warning("No relevant content found.")
+                continue
+
+            combined_text = "\n--\n".join(relevant_chunks)
+            llm = get_llm_client(
+                llm_source, groq_key=groq_key, azure_key=azure_key,
+                azure_url=azure_url, azure_deployment=azure_deployment
+            )
+
+            # Step 1: Summarize
+            prompt_summary = f"""You are reviewing extracted paragraphs from a provider contract.
+
+Text:
+"""{combined_text}"""
+
+Summarize HIV SNP compensation terms, services, codes, units, rates, and limits."""
+            summary = llm([HumanMessage(content=prompt_summary)]).content.strip()
+            st.info(summary)
+
+            # Step 2: Generate test cases
+            prompt_testcases = f"""You are a healthcare QA engineer. Based on the contract summary:
+
+{summary}
+
+Generate at least 6 test case scenarios in JSON list format with fields:
+- Summary
+- Test Scenario
+- Line Number
+- Requirement
+- Service Type
+- Revenue Code
+- Diagnosis Code
+- Units
+- POS
+- Bill Amount
+- Expected Output
+
+Respond with only a valid JSON array."""
+            raw = llm([HumanMessage(content=prompt_testcases)]).content.strip()
+            match = re.search(r'\[.*\]', raw, re.DOTALL)
+            if match:
+                try:
+                    json_data = json.loads(match.group(0))
+                    df = pd.DataFrame(json_data)
+                    st.dataframe(df)
+                    output_file = f"out/testcases_{uploaded.name}.xlsx"
+                    df.to_excel(output_file, index=False)
+                    with open(output_file, "rb") as f:
+                        st.download_button("⬇️ Download Excel", f, file_name=output_file)
+                except json.JSONDecodeError as e:
+                    st.error(f"JSON Parse Error: {e}")
+                    st.code(raw[:500])
+            else:
+                st.error("No valid JSON found in LLM response.")
