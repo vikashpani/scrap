@@ -1,3 +1,64 @@
+
+from langchain.document_loaders import PyPDFLoader
+from langchain.schema import Document
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from pdf2image import convert_from_path
+import pytesseract
+
+def fallback_ocr_loader(pdf_path):
+    images = convert_from_path(pdf_path)
+    docs = []
+    for i, img in enumerate(images):
+        try:
+            text = pytesseract.image_to_string(img)
+            page_text = f"\n[OCR Page {i+1}]\n{text.strip()}"
+            docs.append(Document(page_content=page_text))
+        except Exception as e:
+            print(f"OCR failed on page {i+1}: {e}")
+    return docs
+
+def merge_text_and_ocr(text_docs, ocr_docs):
+    merged_docs = []
+    total_pages = max(len(text_docs), len(ocr_docs))
+    
+    for i in range(total_pages):
+        text_content = text_docs[i].page_content.strip() if i < len(text_docs) else ""
+        ocr_content = ocr_docs[i].page_content.strip() if i < len(ocr_docs) else ""
+        
+        combined = f"{text_content}\n\n{ocr_content}".strip()
+        merged_docs.append(Document(page_content=combined))
+    return merged_docs
+
+def load_and_chunk_pdf(pdf_path):
+    try:
+        loader = PyPDFLoader(pdf_path)
+        text_docs = loader.load()
+    except:
+        text_docs = []
+
+    if not text_docs or not text_docs[0].page_content.strip():
+        text_docs = []
+
+    ocr_docs = fallback_ocr_loader(pdf_path)
+
+    # Merge both sources (text + OCR)
+    merged_docs = merge_text_and_ocr(text_docs, ocr_docs)
+
+    splitter = RecursiveCharacterTextSplitter(chunk_size=700, chunk_overlap=150)
+    chunks = splitter.split_documents(merged_docs)
+
+    return chunks
+
+
+
+
+
+
+
+
+
+
+
 import streamlit as st
 import os
 import tempfile
