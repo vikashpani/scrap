@@ -37,6 +37,30 @@ def store_chunks_in_faiss(chunks, filename):
     )
 
 
+def query_relevant_chunks(query, filename, threshold=0.75, top_k=30):
+    # Embed the query
+    query_vector = embedding_model.embed_query(query)
+
+    # Search FAISS index
+    scores, indices = faiss_index.index.search(
+        np.array([query_vector]).astype("float32"), top_k
+    )
+
+    # Filter results by score threshold and filename match
+    results = []
+    for score, idx in zip(scores[0], indices[0]):
+        if idx == -1:
+            continue  # No result
+
+        doc_id = faiss_index.index_to_docstore_id.get(idx)
+        if doc_id is None:
+            continue
+
+        doc = faiss_index.docstore.search(doc_id)
+        if doc and doc.metadata.get("filename") == filename and score >= threshold:
+            results.append(doc.page_content)
+
+    return results
 
 
 
