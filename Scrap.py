@@ -1,3 +1,43 @@
+max_rows_per_file = 10000
+
+# Convert columns to a single header string
+header = "".join(col for col in all_columns)
+
+# Total number of rows
+total_rows = len(all_data_rows)
+
+# Calculate how many output files are needed
+total_files = (total_rows + max_rows_per_file - 1) // max_rows_per_file
+
+for file_num in range(total_files):
+    start_index = file_num * max_rows_per_file
+    end_index = min(start_index + max_rows_per_file, total_rows)
+    chunk_rows = all_data_rows[start_index:end_index]
+    
+    filename = f"output_claims25-1_latest_{file_num + 1}.txt"
+    
+    with open(filename, "w") as file:
+        file.write(header + "\n")  # write header in every file
+        
+        for row in chunk_rows:
+            s = "|".join(row_val for row_val in row)
+            file.write(s + "\n")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 from langchain.document_loaders import PyPDFLoader
 from langchain.schema import Document
