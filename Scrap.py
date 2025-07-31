@@ -1,3 +1,53 @@
+
+from langchain.vectorstores.faiss import FAISS
+from langchain.docstore.document import Document
+from langchain.docstore.in_memory import InMemoryDocstore
+from langchain.embeddings.base import Embeddings
+import numpy as np
+import faiss
+
+def store_chunks_in_faiss(chunks, filename):
+    global faiss_index  # Optional: if you want to reuse or update it later
+
+    texts = [chunk.page_content for chunk in chunks]
+    metadatas = [{"filename": filename, "text": chunk.page_content} for chunk in chunks]
+
+    # 1. Embed the documents manually (just like you do in Qdrant)
+    vectors = embedding_model.embed_documents(texts)
+
+    # 2. Create Document objects (LangChain uses these with metadata)
+    documents = [Document(page_content=text, metadata=meta) for text, meta in zip(texts, metadatas)]
+
+    # 3. Create FAISS index with same vector size
+    dim = len(vectors[0])
+    index = faiss.IndexFlatL2(dim)
+
+    # 4. Add vectors to FAISS
+    index.add(np.array(vectors).astype("float32"))
+
+    # 5. Create LangChain-compatible FAISS object
+    docstore = InMemoryDocstore({str(i): doc for i, doc in enumerate(documents)})
+    index_to_docstore_id = {i: str(i) for i in range(len(documents))}
+
+    faiss_index = FAISS(
+        embedding_function=embedding_model.embed_query,
+        index=index,
+        docstore=docstore,
+        index_to_docstore_id=index_to_docstore_id,
+    )
+
+
+
+
+
+
+
+
+
+
+
+
+
 max_rows_per_file = 10000
 
 # Convert columns to a single header string
