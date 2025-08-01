@@ -1,3 +1,11 @@
+from pywinauto.application import Application
+from pywinauto.findwindows import find_windows
+
+app = Application(backend="uia").start("calc.exe")
+time.sleep(2)
+
+windows = find_windows(process=app.process, backend="uia")
+print("Handles found:", windows)
 
 from pywinauto import Desktop
 import time
