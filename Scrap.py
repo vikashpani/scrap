@@ -1,3 +1,29 @@
+from pywinauto import Application, Desktop
+import time
+
+# Start Calculator
+Application(backend="uia").start("calc.exe")
+time.sleep(2)  # Allow time for full load
+
+# Connect to Calculator window
+calc_win = Desktop(backend="uia").window(title_re=".*Calculator.*")
+calc_win.wait("visible", timeout=10)
+calc_win.set_focus()
+
+# Perform 2 + 3 =
+calc_win.child_window(title="Two", control_type="Button").click_input()
+calc_win.child_window(title="Plus", control_type="Button").click_input()
+calc_win.child_window(title="Three", control_type="Button").click_input()
+calc_win.child_window(title="Equals", control_type="Button").click_input()
+
+# Extract and clean result
+result_text = calc_win.child_window(auto_id="CalculatorResults", control_type="Text").window_text()
+result = result_text.replace("Display is", "").strip()
+
+print("Result is:", result)
+
+
+
 from pywinauto import Desktop
 windows = Desktop(backend="uia").windows()
 for w in windows:
