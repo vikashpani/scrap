@@ -1,4 +1,33 @@
 
+from pywinauto.application import Application
+import time
+
+# Start the Calculator app
+app = Application(backend="uia").start('calc.exe')
+time.sleep(1)  # wait for it to open
+
+# Connect to the calculator window
+calc = app.window(title_re='Calculator')
+
+# Make sure it's in focus
+calc.set_focus()
+
+# Perform 2 + 3 =
+calc.child_window(title="Two", control_type="Button").click_input()
+calc.child_window(title="Plus", control_type="Button").click_input()
+calc.child_window(title="Three", control_type="Button").click_input()
+calc.child_window(title="Equals", control_type="Button").click_input()
+
+# Wait for result to update
+time.sleep(0.5)
+
+# Get the result
+result = calc.child_window(auto_id="CalculatorResults", control_type="Text").window_text()
+
+print("Result is:", result)
+
+# Optional: Close Calculator
+# app.kill()
 
 
 
