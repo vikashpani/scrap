@@ -3,6 +3,61 @@ from pywinauto.application import Application
 from pywinauto.findwindows import ElementNotFoundError
 import time
 
+# Start Calculator
+app = Application(backend="uia").start("calc.exe")
+time.sleep(1)  # Initial wait
+
+# Print all windows in the app (to debug titles)
+windows = app.windows()
+print(f"Found {len(windows)} windows:")
+for w in windows:
+    print(w.window_text())
+
+# Try to attach to the first visible window (fallback logic)
+main_win = None
+for _ in range(10):  # Try for 5 seconds max
+    try:
+        windows = app.windows()
+        for w in windows:
+            if w.is_visible() and "calc" in w.window_text().lower():
+                main_win = w
+                break
+        if main_win:
+            break
+        time.sleep(0.5)
+    except Exception as e:
+        print("Retrying due to:", e)
+        time.sleep(0.5)
+
+if not main_win:
+    raise TimeoutError("Calculator window not found or visible.")
+
+# Focus and operate
+main_win.set_focus()
+main_win.child_window(title="Two", control_type="Button").click_input()
+main_win.child_window(title="Plus", control_type="Button").click_input()
+main_win.child_window(title="Three", control_type="Button").click_input()
+main_win.child_window(title="Equals", control_type="Button").click_input()
+
+# Get and clean the result
+result = main_win.child_window(auto_id="CalculatorResults", control_type="Text").window_text()
+print("Result is:", result.replace("Display is", "").strip())
+
+
+
+
+
+
+
+
+
+
+
+
+from pywinauto.application import Application
+from pywinauto.findwindows import ElementNotFoundError
+import time
+
 # Start the Calculator app
 app = Application(backend="uia").start("calc.exe")
 time.sleep(1)
