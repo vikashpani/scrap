@@ -1,5 +1,50 @@
 
 from pywinauto.application import Application
+from pywinauto.findwindows import ElementNotFoundError
+import time
+
+# Start the Calculator app
+app = Application(backend="uia").start("calc.exe")
+time.sleep(1)
+
+# Retry to find the window for a few seconds
+for _ in range(10):
+    try:
+        calc = app.window(title_re=".*Calculator.*")
+        calc.wait("visible", timeout=2)
+        break
+    except ElementNotFoundError:
+        time.sleep(0.5)
+else:
+    raise Exception("Calculator window not found after waiting.")
+
+# Bring to front
+calc.set_focus()
+
+# Do operation: 2 + 3 =
+calc.child_window(title="Two", control_type="Button").click_input()
+calc.child_window(title="Plus", control_type="Button").click_input()
+calc.child_window(title="Three", control_type="Button").click_input()
+calc.child_window(title="Equals", control_type="Button").click_input()
+
+# Get result
+result = calc.child_window(auto_id="CalculatorResults", control_type="Text").window_text()
+print("Result is:", result)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+from pywinauto.application import Application
 import time
 
 # Start the Calculator app
