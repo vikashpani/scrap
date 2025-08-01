@@ -1,4 +1,34 @@
 
+from pywinauto import Desktop
+import time
+
+# Launch Calculator manually first or via script
+app = Application(backend="uia").start("calc.exe")
+time.sleep(2)
+
+# Use Desktop to list top-level windows
+win = Desktop(backend="uia").window(title_re=".*Calculator.*")
+win.wait("visible", timeout=10)
+win.set_focus()
+
+win.child_window(title="Two", control_type="Button").click_input()
+win.child_window(title="Plus", control_type="Button").click_input()
+win.child_window(title="Three", control_type="Button").click_input()
+win.child_window(title="Equals", control_type="Button").click_input()
+
+result = win.child_window(auto_id="CalculatorResults", control_type="Text").window_text()
+print("Result is:", result.replace("Display is", "").strip())
+
+
+
+
+
+
+
+
+
+
+
 from pywinauto.application import Application
 from pywinauto.findwindows import ElementNotFoundError
 import time
