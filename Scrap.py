@@ -1,3 +1,79 @@
+def query_relevant_chunks(query, filename, threshold=0.1, top_k=30):
+    if faiss_index is None:
+        print("FAISS index is not built.")
+        return []
+
+    # Embed and Normalize Query Vector
+    query_vector = embedding_model.embed_query(query)
+    query_vector = query_vector / np.linalg.norm(query_vector)
+
+    scores, indices = faiss_index.index.search(np.array([query_vector]).astype("float32"), top_k)
+
+    results = []
+    for score, idx in zip(scores[0], indices[0]):
+        if idx == -1:
+            continue  # No result
+        doc_id = faiss_index.index_to_docstore_id.get(idx)
+        if doc_id is None:
+            continue
+        doc = faiss_index.docstore.search(doc_id)
+        if doc and doc.metadata.get("filename") == filename:
+            print(f"[Match] Filename: {doc.metadata.get('filename')} | Score: {score}")
+            if score >= threshold:
+                results.append(doc.page_content)
+
+    if not results:
+        print("No relevant chunks found with current threshold/filename filter.")
+
+    return results
+
+
+
+
+
+
+
+import faiss
+import numpy as np
+from langchain.vectorstores import FAISS
+from langchain.docstore.in_memory import InMemoryDocstore
+from langchain.schema import Document
+
+faiss_index = None  # Global FAISS Index
+
+def store_chunks_in_faiss(chunks, filename):
+    global faiss_index
+
+    texts = [chunk.page_content for chunk in chunks]
+    metadatas = [{"filename": filename, "text": chunk.page_content} for chunk in chunks]
+
+    vectors = embedding_model.embed_documents(texts)
+    # Normalize vectors for Cosine Similarity
+    vectors = vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
+
+    dim = len(vectors[0])
+    index = faiss.IndexFlatIP(dim)  # Inner Product for Cosine Similarity
+    index.add(np.array(vectors).astype("float32"))
+
+    documents = [Document(page_content=text, metadata=meta) for text, meta in zip(texts, metadatas)]
+    docstore = InMemoryDocstore({str(i): doc for i, doc in enumerate(documents)})
+    index_to_docstore_id = {i: str(i) for i in range(len(documents))}
+
+    faiss_index = FAISS(
+        embedding_function=embedding_model.embed_query,
+        index=index,
+        docstore=docstore,
+        index_to_docstore_id=index_to_docstore_id,
+    )
+
+    print(f"FAISS index built with {len(vectors)} vectors for file: {filename}")
+
+
+
+
+
+
+
 import os
 import json
 import faiss
