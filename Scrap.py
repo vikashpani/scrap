@@ -1,3 +1,22 @@
+| **S.No** | **Achievement Category**                      | **Details**                                                                                                                                                         |
+| -------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1        | Multi-PDF Ingestion & Processing              | Successfully designed a workflow to ingest multiple PDFs and extract relevant content chunk-wise using a combination of text and image (OCR) layers.                |
+| 2        | Hybrid Chunking (Text + OCR)                  | Implemented fallback OCR extraction using `pdf2image` and `pytesseract` to handle image-based PDFs in absence of text layer.                                        |
+| 3        | Vector Store Migration to FAISS               | Transitioned from Qdrant DB (which couldn't be installed on VDI) to FAISS for local vector storage with persistent index management across multiple sessions.       |
+| 4        | Metadata-based File Isolation in FAISS        | Maintained file-level segregation in FAISS using metadata (filename tags) to avoid mixing chunks from different PDFs during similarity searches.                    |
+| 5        | Retrieval-Augmented Generation (RAG) Pipeline | Successfully built an end-to-end RAG flow: Extract relevant content from contract → Summarize → Generate test cases → Refine them iteratively using LLM.            |
+| 6        | Azure OpenAI Integration                      | Integrated with Azure OpenAI endpoint for GPT-4o completions, switching from Groq API to ensure enterprise compliance.                                              |
+| 7        | Streamlit UI for Non-Technical Users          | Developed a Streamlit-based tool that allows users to upload PDFs, trigger chunk extraction, and generate refined test scenarios in a user-friendly interface.      |
+| 8        | FAISS Persistent Index Save/Load              | Enabled saving/loading of FAISS indexes to disk (local JSON and binary files), ensuring persistence across sessions.                                                |
+| 9        | Chunk Querying with Filename Filtering        | Enhanced search mechanism to retrieve only relevant chunks based on filename and query similarity, simulating Qdrant's filter feature.                              |
+| 10       | Test Case Refinement & Expansion              | Developed logic to post-process LLM outputs to ensure sufficient depth of clinical journey test cases, dynamically adding service lines based on scenarios.         |
+| 11       | DataFrame-driven Post Processing              | Leveraged Pandas for refining, merging, and validating the generated test cases, ensuring alignment with contract-provided codes and SDOH billing data.             |
+| 12       | Flexible Deployment without Admin Access      | All code changes were made to work within VDI constraints (no environment variable edits, no Docker, no Qdrant), using local binary paths and in-memory operations. |
+
+
+
+
+
 import faiss
 import numpy as np
 import pickle
