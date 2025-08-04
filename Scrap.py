@@ -1,3 +1,129 @@
+import os
+import json
+import faiss
+import numpy as np
+from langchain.docstore.in_memory import InMemoryDocstore
+from langchain.vectorstores import FAISS
+from langchain.schema import Document
+
+# Global FAISS index
+faiss_index = None
+
+# Embedding model (Assumed to be initialized elsewhere)
+embedding_model = None  # You should initialize your HuggingFaceBgeEmbeddings here
+
+# ---------- Store Chunks in FAISS and Persist ----------
+def store_chunks_in_faiss(chunks, filename):
+    global faiss_index
+
+    texts = [chunk.page_content for chunk in chunks]
+    metadatas = [{"filename": filename, "text": chunk.page_content} for chunk in chunks]
+
+    vectors = embedding_model.embed_documents(texts)
+
+    documents = [Document(page_content=text, metadata=meta) for text, meta in zip(texts, metadatas)]
+    dim = len(vectors[0])
+
+    index = faiss.IndexFlatL2(dim)
+    index.add(np.array(vectors).astype("float32"))
+
+    os.makedirs("faiss_indices", exist_ok=True)
+    faiss.write_index(index, f"faiss_indices/{filename}.index")
+
+    # Persist docstore metadata
+    with open(f"faiss_indices/{filename}_docstore.json", "w", encoding="utf-8") as f:
+        json.dump([
+            {"id": i, "text": doc.page_content, "metadata": doc.metadata}
+            for i, doc in enumerate(documents)
+        ], f, indent=2)
+
+    # In-memory index for immediate use
+    docstore = InMemoryDocstore({str(i): doc for i, doc in enumerate(documents)})
+    index_to_docstore_id = {i: str(i) for i in range(len(documents))}
+
+    faiss_index = FAISS(
+        embedding_function=embedding_model.embed_query,
+        index=index,
+        docstore=docstore,
+        index_to_docstore_id=index_to_docstore_id,
+    )
+
+# ---------- Load FAISS Index & Docstore ----------
+def load_faiss_index(filename):
+    global faiss_index
+
+    index = faiss.read_index(f"faiss_indices/{filename}.index")
+
+    with open(f"faiss_indices/{filename}_docstore.json", "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    docstore = InMemoryDocstore({str(d["id"]): Document(page_content=d["text"], metadata=d["metadata"]) for d in data})
+    index_to_docstore_id = {d["id"]: str(d["id"]) for d in data}
+
+    faiss_index = FAISS(
+        embedding_function=embedding_model.embed_query,
+        index=index,
+        docstore=docstore,
+        index_to_docstore_id=index_to_docstore_id,
+    )
+
+# ---------- Query Relevant Chunks ----------
+def query_relevant_chunks(query, filename, threshold=0.75, top_k=30):
+    global faiss_index
+
+    query_vector = embedding_model.embed_query(query)
+
+    scores, indices = faiss_index.index.search(
+        np.array([query_vector]).astype("float32"), top_k
+    )
+
+    results = []
+
+    for score, idx in zip(scores[0], indices[0]):
+        if idx == -1:
+            continue
+
+        doc_id = faiss_index.index_to_docstore_id.get(idx)
+        if doc_id is None:
+            continue
+
+        doc = faiss_index.docstore.search(doc_id)
+        if doc and doc.metadata.get("filename") == filename and score >= threshold:
+            results.append(doc.page_content)
+
+    return results
+
+# ---------- Usage Example ----------
+# 1. Store Chunks:
+# store_chunks_in_faiss(chunks, filename="contract1")
+
+# 2. Load FAISS index when app restarts:
+# load_faiss_index(filename="contract1")
+
+# 3. Query:
+# results = query_relevant_chunks(query="HIV SNP services", filename="contract1")
+# print(results)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 from pywinauto import Application, Desktop
 import time
 
