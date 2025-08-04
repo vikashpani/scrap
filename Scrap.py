@@ -1,3 +1,88 @@
+import faiss
+import numpy as np
+import pickle
+from langchain.docstore.in_memory import InMemoryDocstore
+from langchain.vectorstores.faiss import FAISS
+from langchain.schema import Document
+
+faiss_index = None
+docstore = None
+index_to_docstore_id = None
+current_id = 0  # Global unique ID across all docs
+
+def store_chunks_in_faiss(chunks, filename, embedding_model):
+    global faiss_index, docstore, index_to_docstore_id, current_id
+
+    texts = [chunk.page_content for chunk in chunks]
+    metadatas = [{"filename": filename, "text": chunk.page_content} for chunk in chunks]
+    vectors = embedding_model.embed_documents(texts)
+
+    dim = len(vectors[0])
+    if faiss_index is None:
+        index = faiss.IndexIDMap2(faiss.IndexFlatL2(dim))
+        faiss_index = index
+        docstore = {}
+        index_to_docstore_id = {}
+
+    ids = []
+    for i, (vec, meta, text) in enumerate(zip(vectors, metadatas, texts)):
+        doc_id = str(current_id)
+        faiss_index.add_with_ids(np.array([vec]).astype('float32'), np.array([current_id]))
+        docstore[doc_id] = Document(page_content=text, metadata=meta)
+        index_to_docstore_id[current_id] = doc_id
+        ids.append(current_id)
+        current_id += 1
+
+    print(f"Added {len(ids)} chunks from {filename} to FAISS.")
+
+
+def query_relevant_chunks(query, filename, embedding_model, threshold=0.1, top_k=30):
+    query_vector = embedding_model.embed_query(query)
+
+    scores, indices = faiss_index.search(np.array([query_vector]).astype('float32'), top_k)
+
+    results = []
+    for score, idx in zip(scores[0], indices[0]):
+        if idx == -1 or score > threshold:
+            continue  # Filter low scores
+        doc_id = index_to_docstore_id.get(idx)
+        if doc_id:
+            doc = docstore[doc_id]
+            if doc.metadata.get("filename") == filename:
+                results.append(doc.page_content)
+    return results
+
+def save_faiss_index(path="faiss_data/multi_pdf"):
+    faiss.write_index(faiss_index, f"{path}.index")
+    data = {
+        "docstore": docstore,
+        "index_to_docstore_id": index_to_docstore_id,
+        "current_id": current_id
+    }
+    with open(f"{path}.pkl", "wb") as f:
+        pickle.dump(data, f)
+    print(f"FAISS index saved at {path}.index and {path}.pkl")
+
+def load_faiss_index(path="faiss_data/multi_pdf"):
+    global faiss_index, docstore, index_to_docstore_id, current_id
+    faiss_index = faiss.read_index(f"{path}.index")
+    with open(f"{path}.pkl", "rb") as f:
+        data = pickle.load(f)
+    docstore = data["docstore"]
+    index_to_docstore_id = data["index_to_docstore_id"]
+    current_id = data["current_id"]
+    print(f"FAISS index loaded with {len(index_to_docstore_id)} entries.")
+    
+
+
+
+
+
+
+
+
+
+
 def query_relevant_chunks(query, filename, threshold=0.1, top_k=30):
     if faiss_index is None:
         print("FAISS index is not built.")
