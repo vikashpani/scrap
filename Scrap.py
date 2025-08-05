@@ -9,6 +9,106 @@ recorded_actions = []
 
 print("Recording actions... Open your app and perform actions. Press ESC to stop.")
 
+# Get control from current mouse position
+def control_from_current_position():
+    try:
+        x, y = mouse.get_position()
+        elem = Desktop(backend="uia").from_point(x, y)
+        info = elem.element_info
+        return {
+            "name": info.name,
+            "control_type": info.control_type,
+            "automation_id": info.automation_id,
+            "rectangle": str(info.rectangle),
+            "coords": (x, y)
+        }
+    except Exception as e:
+        print(f"Failed to get control at ({x},{y}): {e}")
+        return None
+
+# Mouse Event Hook
+def on_mouse_event(event):
+    if hasattr(event, 'event_type') and hasattr(event, 'button'):
+        if event.event_type == 'down' and event.button in ['left', 'right']:
+            time.sleep(0.2)  # Small UI stabilization delay
+            ctrl = control_from_current_position()
+            if ctrl:
+                recorded_actions.append({
+                    "event": "mouse_click",
+                    "button": event.button,
+                    "time": time.time(),
+                    "control": ctrl
+                })
+                print(f"Clicked on {ctrl['name']} at {ctrl['coords']}")
+
+# Keyboard Hook
+typed_text = ""
+def on_key(event):
+    global typed_text
+    if event.name == 'esc':
+        if typed_text:
+            record_text_input()
+        print("Recording stopped.")
+        mouse.unhook_all()
+        keyboard.unhook_all()
+        with open("recorded_user_actions.json", "w") as f:
+            json.dump(recorded_actions, f, indent=4)
+        exit()
+    elif event.event_type == 'down':
+        if event.name == 'enter':
+            record_text_input()
+        else:
+            typed_text += event.name if len(event.name) == 1 else ''
+
+def record_text_input():
+    global typed_text
+    foreground_hwnd = win32gui.GetForegroundWindow()
+    active_ctrl = Desktop(backend="uia").window(handle=foreground_hwnd).element_info
+    action = {
+        "event": "text_input",
+        "text": typed_text,
+        "time": time.time(),
+        "control": {
+            "name": active_ctrl.name,
+            "control_type": active_ctrl.control_type,
+            "automation_id": active_ctrl.automation_id,
+            "rectangle": str(active_ctrl.rectangle)
+        }
+    }
+    recorded_actions.append(action)
+    print(f"Typed Text: {typed_text} in {active_ctrl.name}")
+    typed_text = ""
+
+mouse.hook(on_mouse_event)
+keyboard.hook(on_key)
+
+keyboard.wait('esc')
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import mouse
+import keyboard
+import json
+import time
+from pywinauto import Desktop
+import win32gui
+
+recorded_actions = []
+
+print("Recording actions... Open your app and perform actions. Press ESC to stop.")
+
 # Resolve control dynamically at click position
 def control_from_point(x, y):
     try:
