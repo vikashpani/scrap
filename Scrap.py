@@ -1,3 +1,44 @@
+from pywinauto.uia_defines import IUIA
+
+def record_text_input():
+    global typed_text
+    if not typed_text.strip():
+        return
+    try:
+        focused_elem = IUIA().get_focused_element()
+        info = focused_elem.element_info
+        action = {
+            "event": "text_input",
+            "text": typed_text,
+            "time": time.time(),
+            "control": {
+                "name": info.name,
+                "control_type": info.control_type,
+                "automation_id": info.automation_id,
+                "rectangle": str(info.rectangle)
+            }
+        }
+        recorded_actions.append(action)
+        print(f"Typed Text: {typed_text} in {info.name}")
+    except Exception as e:
+        print(f"Failed to get focused control: {e}")
+    typed_text = ""
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def record_text_input():
     global typed_text
     if not typed_text.strip():
