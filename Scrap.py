@@ -1,3 +1,34 @@
+def record_text_input():
+    global typed_text
+    if not typed_text.strip():
+        return
+    try:
+        focused_ctrl = Desktop(backend="uia").get_focus().element_info
+        action = {
+            "event": "text_input",
+            "text": typed_text,
+            "time": time.time(),
+            "control": {
+                "name": focused_ctrl.name,
+                "control_type": focused_ctrl.control_type,
+                "automation_id": focused_ctrl.automation_id,
+                "rectangle": str(focused_ctrl.rectangle)
+            }
+        }
+        recorded_actions.append(action)
+        print(f"Typed Text: {typed_text} in {focused_ctrl.name}")
+    except Exception as e:
+        print(f"Failed to get focused control: {e}")
+    typed_text = ""
+
+
+
+
+
+
+
+
+
 import mouse
 import keyboard
 import json
