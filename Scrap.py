@@ -1,3 +1,88 @@
+import mouse
+import keyboard
+import json
+import time
+from pywinauto import Desktop
+
+recorded_actions = []
+
+print("Recording actions... Click on app and Press ESC to stop.")
+
+def control_from_point(x, y):
+    try:
+        elem = Desktop(backend="uia").from_point(x, y)
+        info = elem.element_info
+        return {
+            "name": info.name,
+            "control_type": info.control_type,
+            "automation_id": info.automation_id,
+            "rectangle": str(info.rectangle)
+        }
+    except:
+        return None
+
+# Mouse Click Listener using from_point
+def on_click(event):
+    ctrl = control_from_point(event.x, event.y)
+    if ctrl:
+        recorded_actions.append({
+            "event": "mouse_click",
+            "button": event.button,
+            "time": time.time(),
+            "control": ctrl
+        })
+        print(f"Clicked on {ctrl['name']} at ({event.x},{event.y})")
+
+# Keyboard Listener to capture text inputs
+typed_text = ""
+def on_key(event):
+    global typed_text
+    if event.name == 'esc':
+        if typed_text:
+            record_text_input()
+        print("Recording stopped.")
+        mouse.unhook_all()
+        keyboard.unhook_all()
+        with open("recorded_user_actions.json", "w") as f:
+            json.dump(recorded_actions, f, indent=4)
+        exit()
+    elif event.event_type == 'down':
+        if event.name == 'enter':
+            record_text_input()
+        else:
+            typed_text += event.name if len(event.name) == 1 else ''
+
+def record_text_input():
+    global typed_text
+    ctrl = Desktop(backend="uia").get_active().element_info
+    action = {
+        "event": "text_input",
+        "text": typed_text,
+        "time": time.time(),
+        "control": {
+            "name": ctrl.name,
+            "control_type": ctrl.control_type,
+            "automation_id": ctrl.automation_id,
+            "rectangle": str(ctrl.rectangle)
+        }
+    }
+    recorded_actions.append(action)
+    print(f"Typed Text: {typed_text} in {ctrl.name}")
+    typed_text = ""
+
+mouse.on_click(on_click)
+keyboard.hook(on_key)
+
+keyboard.wait('esc')
+
+
+
+
+
+
+
+
+
 import streamlit as st
 import subprocess
 import pyautogui
