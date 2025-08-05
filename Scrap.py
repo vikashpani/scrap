@@ -1,3 +1,28 @@
+def record_text_input():
+    global typed_text, last_clicked_control
+    if not typed_text.strip():
+        return
+    if last_clicked_control:
+        action = {
+            "event": "text_input",
+            "text": typed_text,
+            "time": time.time(),
+            "control": last_clicked_control  # We use last clicked control!
+        }
+        recorded_actions.append(action)
+        print(f"Typed Text: {typed_text} in {last_clicked_control['name']}")
+    else:
+        print("No control clicked before typing. Text recorded without control info.")
+    typed_text = ""
+
+
+
+
+
+
+
+
+
 from pywinauto.uia_defines import IUIA
 
 def record_text_input():
