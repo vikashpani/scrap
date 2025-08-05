@@ -3,6 +3,120 @@ import keyboard
 import json
 import time
 from pywinauto import Desktop
+from pywinauto.controls.uiawrapper import UIAWrapper
+
+recorded_actions = []
+control_map = []
+
+print("Loading UI Tree...")
+
+def dump_control_tree(element: UIAWrapper, depth=0):
+    node = {
+        "name": element.element_info.name,
+        "control_type": element.element_info.control_type,
+        "automation_id": element.element_info.automation_id,
+        "rectangle": element.element_info.rectangle,
+        "depth": depth
+    }
+    control_map.append(node)
+    try:
+        for child in element.children():
+            dump_control_tree(child, depth + 1)
+    except:
+        pass
+
+# Load Active App Tree
+active_app = Desktop(backend="uia").get_active()
+dump_control_tree(active_app)
+
+print(f"Loaded {len(control_map)} controls.")
+
+# Find Control by Mouse Position
+def find_control_by_position(x, y):
+    for ctrl in control_map:
+        rect = ctrl["rectangle"]
+        if rect.left <= x <= rect.right and rect.top <= y <= rect.bottom:
+            return ctrl
+    return None
+
+# Mouse Event Hook
+def on_mouse_event(event):
+    if hasattr(event, 'event_type') and hasattr(event, 'button'):
+        if event.event_type == 'down' and event.button in ['left', 'right']:
+            time.sleep(0.2)  # Let system stabilize UI state
+            ctrl = find_control_by_position(event.x, event.y)
+            if ctrl:
+                recorded_actions.append({
+                    "event": "mouse_click",
+                    "button": event.button,
+                    "time": time.time(),
+                    "control": {
+                        "name": ctrl['name'],
+                        "control_type": ctrl['control_type'],
+                        "automation_id": ctrl['automation_id'],
+                        "rectangle": str(ctrl['rectangle'])
+                    }
+                })
+                print(f"Clicked on {ctrl['name']} at ({event.x},{event.y})")
+
+# Keyboard Hook
+typed_text = ""
+def on_key(event):
+    global typed_text
+    if event.name == 'esc':
+        if typed_text:
+            record_text_input()
+        print("Recording stopped.")
+        mouse.unhook_all()
+        keyboard.unhook_all()
+        with open("recorded_user_actions.json", "w") as f:
+            json.dump(recorded_actions, f, indent=4)
+        exit()
+    elif event.event_type == 'down':
+        if event.name == 'enter':
+            record_text_input()
+        else:
+            typed_text += event.name if len(event.name) == 1 else ''
+
+def record_text_input():
+    global typed_text
+    active_ctrl = Desktop(backend="uia").get_active().element_info
+    action = {
+        "event": "text_input",
+        "text": typed_text,
+        "time": time.time(),
+        "control": {
+            "name": active_ctrl.name,
+            "control_type": active_ctrl.control_type,
+            "automation_id": active_ctrl.automation_id,
+            "rectangle": str(active_ctrl.rectangle)
+        }
+    }
+    recorded_actions.append(action)
+    print(f"Typed Text: {typed_text} in {active_ctrl.name}")
+    typed_text = ""
+
+mouse.hook(on_mouse_event)
+keyboard.hook(on_key)
+
+keyboard.wait('esc')
+
+
+
+
+
+
+
+
+
+
+
+
+import mouse
+import keyboard
+import json
+import time
+from pywinauto import Desktop
 
 recorded_actions = []
 
