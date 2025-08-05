@@ -33,6 +33,178 @@ if st.button("Start Recording"):
     st.info("Recording in Progress... (Press 'Esc' to Stop Recording)")
 
     while True:
+        # Stop recording if ESC is pressed
+        if keyboard.is_pressed('esc'):
+            st.success("Recording Stopped.")
+            break
+        
+        # Capture Mouse Clicks
+        if pyautogui.mouseDown():
+            x, y = pyautogui.position()
+            element_info = {}
+            try:
+                elem = Desktop(backend="uia").get_active()
+                element_info = {
+                    'name': elem.element_info.name,
+                    'control_type': elem.element_info.control_type,
+                    'automation_id': elem.element_info.automation_id,
+                    'rectangle': str(elem.element_info.rectangle),
+                }
+            except Exception:
+                pass
+
+            action = {
+                'type': 'click',
+                'position': (x, y),
+                'element': element_info,
+                'timestamp': time.time()
+            }
+            recorded_actions.append(action)
+            time.sleep(0.5)
+
+        # Capture Keypresses
+        keys = keyboard.get_hotkey_name()
+        if keys and keys != 'esc':
+            element_info = {}
+            try:
+                elem = Desktop(backend="uia").get_active()
+                element_info = {
+                    'name': elem.element_info.name,
+                    'control_type': elem.element_info.control_type,
+                    'automation_id': elem.element_info.automation_id,
+                    'rectangle': str(elem.element_info.rectangle),
+                }
+            except Exception:
+                pass
+
+            action = {
+                'type': 'keypress',
+                'keys': keys,
+                'element': element_info,
+                'timestamp': time.time()
+            }
+            recorded_actions.append(action)
+            time.sleep(0.5)
+
+    # Save recorded actions
+    with open("recorded_actions.json", "w") as f:
+        json.dump(recorded_actions, f, indent=4)
+
+    st.success("Actions Recorded Successfully!")
+
+# Generate Script using Azure OpenAI API
+if st.button("Generate Script with Azure OpenAI"):
+    if not os.path.exists("recorded_actions.json"):
+        st.error("No recorded actions found. Please record first.")
+    else:
+        with open("recorded_actions.json", "r") as f:
+            recorded_data = json.load(f)
+
+        prompt = f"""
+You are an expert RPA Automation Script Generator using Python's pywinauto library.
+Based on the following recorded user actions, generate a Python script to automate them:
+{json.dumps(recorded_data, indent=2)}
+
+- Launch the application using pywinauto Application(backend="uia").
+- For clicks, try to identify controls by title, control_type, automation_id.
+- If identification fails, fallback to click_input(coords=(x, y)).
+- For keypress actions, use type_keys.
+- Add appropriate waits for control readiness.
+- Generate clean executable Python code.
+"""
+
+        headers = {
+            'Content-Type': 'application/json',
+            'api-key': AZURE_OPENAI_KEY
+        }
+
+        payload = {
+            "messages": [
+                {"role": "system", "content": "You are a Python automation script writer."},
+                {"role": "user", "content": prompt}
+            ],
+            "max_tokens": 1500,
+            "temperature": 0.2
+        }
+
+        response = requests.post(
+            f"{AZURE_OPENAI_ENDPOINT}openai/deployments/{DEPLOYMENT_NAME}/chat/completions?api-version=2023-05-15",
+            headers=headers,
+            json=payload
+        )
+
+        if response.status_code == 200:
+            ai_response = response.json()
+            generated_code = ai_response['choices'][0]['message']['content']
+            st.code(generated_code, language="python")
+
+            with open("generated_script.py", "w") as f:
+                f.write(generated_code)
+
+            st.download_button("Download Script", generated_code, file_name="generated_script.py")
+        else:
+            st.error(f"Failed to get response from Azure OpenAI: {response.text}")
+
+# Replay Script
+if st.button("Replay Generated Script"):
+    if not os.path.exists("generated_script.py"):
+        st.error("No generated script found. Please generate it first.")
+    else:
+        subprocess.run(["python", "generated_script.py"])
+        st.success("Replay Completed.")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import streamlit as st
+import subprocess
+import pyautogui
+import keyboard
+import time
+import json
+from pywinauto import Desktop
+import requests
+import os
+
+# ========== CONFIG ==========
+AZURE_OPENAI_ENDPOINT = 'https://<YOUR-ENDPOINT>.openai.azure.com/'
+AZURE_OPENAI_KEY = '<YOUR-API-KEY>'
+DEPLOYMENT_NAME = '<YOUR-DEPLOYMENT-NAME>'  # GPT-4 deployment name in Azure
+# ============================
+
+# List of apps you want to automate
+apps = {
+    "Notepad": r"C:\Windows\System32\notepad.exe",
+    "Calculator": r"C:\Windows\System32\calc.exe"
+}
+
+st.title("AI-Powered RPA Recorder (Streamlit + Azure OpenAI)")
+
+# Streamlit UI Elements
+selected_app = st.selectbox("Select Application", list(apps.keys()))
+
+if st.button("Start Recording"):
+    subprocess.Popen(apps[selected_app])
+    st.success(f"Recording started for {selected_app}. Perform your actions. Press 'Esc' key to stop.")
+    recorded_actions = []
+
+    st.info("Recording in Progress... (Press 'Esc' to Stop Recording)")
+
+    while True:
         if keyboard.is_pressed('esc'):
             st.success("Recording Stopped.")
             break
