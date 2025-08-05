@@ -2,6 +2,134 @@ import mouse
 import keyboard
 import json
 import time
+import threading
+from pywinauto import Desktop
+import win32gui
+
+recorded_actions = []
+typed_text = ""
+recording = True  # Flag to stop recording on ESC
+
+print("Recording started... Perform actions and press ESC to stop.")
+
+# Get control from current mouse position
+def control_from_current_position():
+    try:
+        x, y = mouse.get_position()
+        elem = Desktop(backend="uia").from_point(x, y)
+        info = elem.element_info
+        return {
+            "name": info.name,
+            "control_type": info.control_type,
+            "automation_id": info.automation_id,
+            "rectangle": str(info.rectangle),
+            "coords": (x, y)
+        }
+    except Exception as e:
+        print(f"Failed to get control at ({x},{y}): {e}")
+        return None
+
+# Mouse Event Listener
+def mouse_listener():
+    while recording:
+        # Mouse is event-driven, no need for polling
+        pass  # Hook is handled outside (non-blocking)
+    print("Mouse listener stopped.")
+
+# Mouse Hook Callback
+def on_mouse_event(event):
+    if hasattr(event, 'event_type') and hasattr(event, 'button'):
+        if event.event_type == 'down' and event.button in ['left', 'right']:
+            time.sleep(0.2)
+            ctrl = control_from_current_position()
+            if ctrl:
+                recorded_actions.append({
+                    "event": "mouse_click",
+                    "button": event.button,
+                    "time": time.time(),
+                    "control": ctrl
+                })
+                print(f"Clicked on {ctrl['name']} at {ctrl['coords']}")
+
+# Keyboard Hook Callback
+def on_key_event(event):
+    global typed_text, recording
+    if event.name == 'esc' and event.event_type == 'down':
+        # Stop Recording
+        print("ESC pressed. Stopping recording.")
+        recording = False
+        if typed_text:
+            record_text_input()
+        # Unhook listeners
+        mouse.unhook(on_mouse_event)
+        keyboard.unhook_all()
+        # Save actions
+        with open("recorded_user_actions.json", "w") as f:
+            json.dump(recorded_actions, f, indent=4)
+        print("Actions saved to recorded_user_actions.json")
+    elif event.event_type == 'down':
+        if event.name == 'enter':
+            record_text_input()
+        else:
+            typed_text += event.name if len(event.name) == 1 else ''
+
+def record_text_input():
+    global typed_text
+    if not typed_text.strip():
+        return
+    foreground_hwnd = win32gui.GetForegroundWindow()
+    active_ctrl = Desktop(backend="uia").window(handle=foreground_hwnd).element_info
+    action = {
+        "event": "text_input",
+        "text": typed_text,
+        "time": time.time(),
+        "control": {
+            "name": active_ctrl.name,
+            "control_type": active_ctrl.control_type,
+            "automation_id": active_ctrl.automation_id,
+            "rectangle": str(active_ctrl.rectangle)
+        }
+    }
+    recorded_actions.append(action)
+    print(f"Typed Text: {typed_text} in {active_ctrl.name}")
+    typed_text = ""
+
+# Start Mouse Hook (non-blocking)
+mouse.hook(on_mouse_event)
+
+# Start Keyboard Hook (non-blocking)
+keyboard.hook(on_key_event)
+
+# Keep main thread alive while recording
+while recording:
+    time.sleep(0.5)
+
+print("Recorder stopped.")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import mouse
+import keyboard
+import json
+import time
 from pywinauto import Desktop
 import win32gui
 
