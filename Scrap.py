@@ -1,3 +1,72 @@
+def process_edi_files(edi_files):
+    import json
+
+    # Load Cached Guide Data
+    with open("cached_guide_segments.json", "r") as f:
+        guide_data = json.load(f)
+
+    # --- FIX 1: Flatten Nested Lists in guide_data ---
+    flattened_guide_data = []
+    for item in guide_data:
+        if isinstance(item, list):
+            flattened_guide_data.extend(item)  # Unpack nested list
+        elif isinstance(item, dict):
+            flattened_guide_data.append(item)  # Keep dict entries
+    guide_data = flattened_guide_data
+
+    # --- Main Processing Loop ---
+    extracted_claims = []
+
+    for edi_file in edi_files:
+        content = edi_file.read().decode('utf-8', errors='ignore')
+        segments = content.split('~')
+
+        current_claim = {}
+        for segment in segments:
+            segment = segment.strip()
+            if not segment:
+                continue  # Skip empty lines
+
+            seg_id = segment.split('*')[0].strip()
+
+            # --- FIX 2: Safe Segment Lookup ---
+            guide_segment = next(
+                (item for item in guide_data if isinstance(item, dict) and item.get('segment_id') == seg_id),
+                None
+            )
+
+            # Debugging
+            st.write(f"Processing Segment ID: {seg_id}")
+            if guide_segment:
+                st.write(f"Matched Guide Segment: {guide_segment['segment_id']}")
+            else:
+                st.warning(f"No mapping found for segment: {seg_id}")
+                continue
+
+            # Extract Data using LLM
+            extracted = extract_data_from_segment(segment, guide_segment)
+
+            # Update Current Claim Dict
+            current_claim.update(extracted)
+
+            # Detect End of Claim (For Example: CLM Segment starts a new claim)
+            if seg_id == 'CLM' and current_claim:
+                extracted_claims.append(current_claim.copy())
+                current_claim = {}
+
+    # In case there's any remaining data
+    if current_claim:
+        extracted_claims.append(current_claim)
+
+    return extracted_claims
+
+
+
+
+
+
+
+
 def extract_data_from_segment(segment_line, guide_segment):
     # Convert fields list to flat dictionary for prompt clarity
     field_mappings = {field['code']: field['name'] for field in guide_segment['fields']}
