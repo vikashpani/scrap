@@ -1,3 +1,26 @@
+@st.cache_data
+def build_faiss_index(guide_files):
+    chunks = []
+    for guide_file in guide_files:
+        try:
+            content = guide_file.read().decode('utf-8')
+        except UnicodeDecodeError:
+            guide_file.seek(0)
+            content = guide_file.read().decode('latin1')  # fallback to latin1 (windows-1252)
+        lines = content.split('\n')
+        for line in lines:
+            if line.strip():
+                chunks.append(line.strip())
+    embeddings = OpenAIEmbeddings(openai_api_key=AZURE_OPENAI_KEY)
+    vectorstore = FAISS.from_texts(chunks, embeddings)
+    return vectorstore
+
+
+
+
+
+
+
 import streamlit as st
 import pandas as pd
 import os
