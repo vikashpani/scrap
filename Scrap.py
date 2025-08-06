@@ -1,3 +1,41 @@
+def extract_data_from_segment(segment_line, guide_segment):
+    # Convert fields list to flat dictionary for prompt clarity
+    field_mappings = {field['code']: field['name'] for field in guide_segment['fields']}
+
+    prompt = f"""
+    You are an EDI Data Extractor.
+
+    EDI Segment Line:
+    {segment_line}
+
+    Companion Guide Mapping:
+    Segment ID: {guide_segment['segment_id']}
+    Description: {guide_segment['description']}
+    Fields Mapping:
+    {json.dumps(field_mappings, indent=2)}
+
+    Extract only the data elements from the segment based on this mapping.
+    Return as JSON key-value pairs.
+    """
+    response = client.chat.completions.create(
+        model="gpt-35-turbo",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    try:
+        return json.loads(response.choices[0].message.content)
+    except Exception as e:
+        st.warning(f"Failed to parse extraction for segment: {segment_line[:30]}... Error: {e}")
+        return {}
+
+
+
+
+
+
+
+
+
+
 import streamlit as st
 import os
 import json
