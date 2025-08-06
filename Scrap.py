@@ -1,3 +1,190 @@
+import streamlit as st
+import os
+import json
+import pandas as pd
+from PyPDF2 import PdfReader
+from docx import Document
+from openai import AzureOpenAI
+
+# Azure OpenAI Configuration
+AZURE_OPENAI_KEY = "YOUR_AZURE_OPENAI_KEY"
+AZURE_OPENAI_ENDPOINT = "YOUR_AZURE_OPENAI_ENDPOINT"
+client = AzureOpenAI(api_key=AZURE_OPENAI_KEY, azure_endpoint=AZURE_OPENAI_ENDPOINT)
+
+# --- UI Layout ---
+st.title("📄 EDI Companion Guide & Data Extractor")
+
+# Session State
+if 'guide_processed' not in st.session_state:
+    st.session_state['guide_processed'] = os.path.exists("cached_guide_segments.json")
+
+# --- Companion Guide Upload ---
+companion_guide_file = st.file_uploader("Upload Companion Guide (PDF/DOCX)", type=["pdf", "docx"])
+
+if st.button("🔄 Re-Extract Companion Guide Data"):
+    if companion_guide_file:
+        with st.spinner("Processing Companion Guide using AI..."):
+            guide_data = extract_segments_from_guide(companion_guide_file)
+
+            with open("cached_guide_segments.json", "w") as f:
+                json.dump(guide_data, f, indent=2)
+
+            st.session_state['guide_processed'] = True
+            st.success("Companion Guide processed and cached successfully!")
+    else:
+        st.error("Please upload a Companion Guide file first.")
+
+# --- EDI Files Upload ---
+uploaded_edi_files = st.file_uploader("Upload EDI Files", type=["txt"], accept_multiple_files=True)
+
+if st.button("🚀 Extract Data from EDI Files"):
+    if uploaded_edi_files and st.session_state['guide_processed']:
+        with st.spinner("Extracting data from EDI files..."):
+            extracted_data = process_edi_files(uploaded_edi_files)
+            export_to_excel(extracted_data)
+            st.success("✅ Data extracted and saved to Extracted_EDI_Data.xlsx!")
+            st.download_button("📥 Download Excel", data=open("Extracted_EDI_Data.xlsx", "rb"), file_name="Extracted_EDI_Data.xlsx")
+    else:
+        st.error("Upload EDI files and ensure Companion Guide is processed.")
+
+
+# ------------------ FUNCTION DEFINITIONS -------------------
+
+def extract_text_from_pdf(file):
+    reader = PdfReader(file)
+    text = ""
+    for page in reader.pages:
+        page_text = page.extract_text()
+        if page_text:
+            text += page_text + "\n"
+    return text
+
+def extract_text_from_docx(file):
+    doc = Document(file)
+    return "\n".join([para.text for para in doc.paragraphs])
+
+def extract_segments_from_guide(file):
+    # Extract raw text from file
+    if file.name.endswith(".pdf"):
+        raw_text = extract_text_from_pdf(file)
+    elif file.name.endswith(".docx"):
+        raw_text = extract_text_from_docx(file)
+    else:
+        return []
+
+    chunks = split_into_segments(raw_text)
+
+    extracted_data = []
+    for chunk in chunks:
+        prompt = f"""
+        You are an EDI Companion Guide Parser.
+
+        Given Text:
+        {chunk}
+
+        Extract Segment ID, Description, and Field Mappings.
+        Return JSON like:
+        {{
+            "segment_id": "SEGMENT_ID",
+            "description": "Description",
+            "fields": {{
+                "ElementCode1": "Field Name 1",
+                "ElementCode2": "Field Name 2"
+            }}
+        }}
+        """
+        response = client.chat.completions.create(
+            model="gpt-35-turbo",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        try:
+            extracted_data.append(json.loads(response.choices[0].message.content))
+        except Exception as e:
+            st.warning(f"Failed to parse segment: {chunk[:30]}... Error: {e}")
+    return extracted_data
+
+def split_into_segments(raw_text):
+    # Example: split by 'Segment:' or segment heading patterns in your guide
+    segments = []
+    current_segment = ""
+    for line in raw_text.split('\n'):
+        if line.strip().startswith("Segment") or line.strip().startswith("ISA") or line.strip().startswith("CLM"):
+            if current_segment:
+                segments.append(current_segment.strip())
+            current_segment = line + "\n"
+        else:
+            current_segment += line + "\n"
+    if current_segment:
+        segments.append(current_segment.strip())
+    return segments
+
+def process_edi_files(edi_files):
+    with open("cached_guide_segments.json", "r") as f:
+        guide_data = json.load(f)
+
+    extracted_claims = []
+    for edi_file in edi_files:
+        content = edi_file.read().decode('utf-8', errors='ignore')
+        segments = content.split('~')
+
+        current_claim = {}
+        for segment in segments:
+            seg_id = segment.split('*')[0]
+            guide_segment = next((item for item in guide_data if item['segment_id'] == seg_id), None)
+
+            if guide_segment:
+                extracted = extract_data_from_segment(segment, guide_segment)
+                current_claim.update(extracted)
+
+            if seg_id == 'CLM' and current_claim:
+                extracted_claims.append(current_claim.copy())
+                current_claim = {}
+
+    return extracted_claims
+
+def extract_data_from_segment(segment_line, guide_segment):
+    prompt = f"""
+    You are an EDI 837i Data Extractor.
+
+    EDI Segment Line:
+    {segment_line}
+
+    Companion Guide Mapping:
+    {guide_segment}
+
+    Extract only the data elements from the segment based on the mapping. Return as JSON key-value pairs.
+    """
+    response = client.chat.completions.create(
+        model="gpt-35-turbo",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    try:
+        return json.loads(response.choices[0].message.content)
+    except Exception as e:
+        st.warning(f"Failed to extract data from segment: {segment_line[:30]}... Error: {e}")
+        return {}
+
+def export_to_excel(extracted_data):
+    df = pd.DataFrame(extracted_data)
+    df.to_excel("Extracted_EDI_Data.xlsx", index=False)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ISA*00*          *00*          *ZZ*SENDERID       *ZZ*RECEIVERID     *240805*1230*^*00501*000000905*0*T*:~
 GS*HC*SENDERID*RECEIVERID*20240805*1230*1*X*005010X223A2~
 ST*837*0001*005010X223A2~
