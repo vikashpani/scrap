@@ -1,3 +1,127 @@
+import streamlit as st
+import pandas as pd
+import os
+import faiss
+import tempfile
+from langchain.vectorstores import FAISS
+from langchain.embeddings.openai import OpenAIEmbeddings
+from openai import AzureOpenAI
+
+# Azure OpenAI Config
+AZURE_OPENAI_KEY = "YOUR_AZURE_OPENAI_KEY"
+AZURE_OPENAI_ENDPOINT = "YOUR_AZURE_OPENAI_ENDPOINT"
+
+# Initialize OpenAI Client
+client = AzureOpenAI(api_key=AZURE_OPENAI_KEY, azure_endpoint=AZURE_OPENAI_ENDPOINT)
+
+st.title("EDI Data Extractor - RAG Powered")
+
+# Sidebar - Upload Companion Guides
+st.sidebar.header("Upload Companion Guides")
+uploaded_guides = st.sidebar.file_uploader("Upload Guide Files (TXT/PDF)", type=["txt", "pdf"], accept_multiple_files=True)
+
+# Main - Upload EDI Files
+uploaded_edi_files = st.file_uploader("Upload EDI Files", type=["txt"], accept_multiple_files=True)
+
+# File Type Selection for EDI Files
+file_types = {}
+if uploaded_edi_files:
+    for edi_file in uploaded_edi_files:
+        file_type = st.selectbox(f"Select EDI Type for {edi_file.name}", ["837i", "820"], key=edi_file.name)
+        file_types[edi_file.name] = file_type
+
+# Load Companion Guides into FAISS
+@st.cache_data
+def build_faiss_index(guide_files):
+    chunks = []
+    for guide_file in guide_files:
+        content = guide_file.read().decode('utf-8')
+        lines = content.split('\n')
+        for line in lines:
+            if line.strip():
+                chunks.append(line.strip())
+    embeddings = OpenAIEmbeddings(openai_api_key=AZURE_OPENAI_KEY)
+    vectorstore = FAISS.from_texts(chunks, embeddings)
+    return vectorstore
+
+if uploaded_guides:
+    st.sidebar.success("Companion Guides Uploaded")
+    vectorstore = build_faiss_index(uploaded_guides)
+
+def preprocess_edi(content):
+    edi_cleaned = content.replace('\n', '').replace('\r', '')
+    return [seg.strip() for seg in edi_cleaned.split('~') if seg.strip()]
+
+def retrieve_context(segment_line):
+    docs = vectorstore.similarity_search(segment_line, k=1)
+    return docs[0].page_content if docs else ""
+
+def extract_data(segment_line, context):
+    prompt = f"""
+    You are an EDI Data Extractor.
+    Companion Guide Context:
+    {context}
+
+    Given EDI Segment Line:
+    {segment_line}
+
+    Extract data elements as key-value JSON.
+    """
+    response = client.chat.completions.create(
+        model="gpt-35-turbo",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content
+
+# Process Button
+if st.button("Process EDI Files") and uploaded_edi_files and uploaded_guides:
+    all_claims_data = []
+
+    for edi_file in uploaded_edi_files:
+        content = edi_file.read().decode('utf-8')
+        segments = preprocess_edi(content)
+
+        current_claim = {}
+        for segment in segments:
+            context = retrieve_context(segment)
+            extracted_json = extract_data(segment, context)
+            try:
+                segment_data = eval(extracted_json)
+                if 'Claim_ID' in segment_data:  # Detecting new claim start
+                    if current_claim:
+                        all_claims_data.append(current_claim)
+                    current_claim = {}
+                current_claim.update(segment_data)
+            except:
+                continue
+        if current_claim:
+            all_claims_data.append(current_claim)
+
+    # Export to Excel
+    df = pd.DataFrame(all_claims_data)
+    tmp_download_file = tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx')
+    df.to_excel(tmp_download_file.name, index=False)
+
+    st.success("Extraction Complete!")
+    st.download_button(label="Download Extracted Data", data=open(tmp_download_file.name, 'rb'), file_name='extracted_claims.xlsx')
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def record_text_input():
     global typed_text, last_clicked_control
     if not typed_text.strip():
