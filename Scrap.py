@@ -1,3 +1,56 @@
+def export_output(data_rows, output_path="out/output_segments.xlsx"):
+    """
+    Export rows to separate Excel sheets based on segment extracted by `extract_bold_field_name`.
+    """
+    from collections import defaultdict
+    import pandas as pd
+    import os
+
+    segment_sheets = defaultdict(list)
+
+    for row in data_rows:
+        for field in row:
+            segment = extract_bold_field_name(field)
+            segment_sheets[segment].append(row)
+            break  # only consider the first field for segment grouping
+
+    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+        for segment, rows in segment_sheets.items():
+            df = pd.DataFrame(rows)
+            safe_segment = segment[:31]  # Excel sheet name limit
+            df.to_excel(writer, sheet_name=safe_segment, index=False)
+
+    print(f"Exported to {output_path}")
+
+
+def extract_bold_field_name(text):
+    """
+    Extract bold field names enclosed in '**' and return the segment.
+    If multiple '**' are found, use the last one.
+    Fallback to extracting segment from text like 'ENT01 - something'
+    """
+    import re
+    matches = re.findall(r'\*\*(.*?)\*\*', text)
+    if matches:
+        segment_name = matches[-1].strip().split()[0]  # Use last match and take first word
+    else:
+        segment_name = text.strip().split()[0]  # Fallback, take first word (like 'ENT01' → 'ENT')
+
+    return segment_name.upper()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import re
 import pandas as pd
 import json
