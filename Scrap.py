@@ -1,3 +1,61 @@
+import pandas as pd
+import json
+
+def extract_bold_field_name(description):
+    """Extract field name from bold markdown text like '**ISA01 - Authorization Info Qualifier**'."""
+    import re
+    match = re.search(r"\*\*(.*?)\*\*", description)
+    if match:
+        return match.group(1).strip()
+    return None
+
+def export_output(data, base_name):
+    # Group rows by segment
+    segment_rows = {}
+
+    for item in data:
+        segment = item["segment"]
+        fields = item["fields"]
+
+        row = {}
+        for field_desc, field_value in fields:
+            field_name = extract_bold_field_name(field_desc)
+            if field_name:
+                row[field_name] = field_value
+
+        # Append the row to the corresponding segment's list
+        segment_rows.setdefault(segment, []).append(row)
+
+    # Write to Excel with multiple sheets
+    excel_file = f"{base_name}.xlsx"
+    with pd.ExcelWriter(excel_file) as writer:
+        for segment, rows in segment_rows.items():
+            df = pd.DataFrame(rows)
+            # Sheet names can't be more than 31 characters or contain some symbols
+            safe_segment = segment[:31].replace('/', '_').replace('\\', '_')
+            df.to_excel(writer, sheet_name=safe_segment, index=False)
+
+    # Write full JSON as backup
+    json_file = f"{base_name}.json"
+    with open(json_file, "w") as jf:
+        json.dump(data, jf, indent=4)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def enrich_with_descriptions(segments_dict, chain):
     enriched_segments = {}
 
