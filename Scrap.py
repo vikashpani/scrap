@@ -1,3 +1,46 @@
+import re
+import pandas as pd
+import json
+
+def extract_bold_field_name(text):
+    """Extract the **bold** part of the field description."""
+    match = re.search(r"\*\*(.*?)\*\*", text)
+    return match.group(1).strip() if match else None
+
+def export_output(data, base_name):
+    rows = []
+    for item in data:
+        row = {"Segment": item["segment"]}
+        for field_desc, field_value in item["fields"]:
+            field_name = extract_bold_field_name(field_desc)
+            if field_name:
+                row[field_name] = field_value
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+    excel_file = f"{base_name}.xlsx"
+    json_file = f"{base_name}.json"
+
+    df.to_excel(excel_file, index=False)
+    
+    # Full JSON with descriptions retained
+    with open(json_file, "w") as f:
+        json.dump(data, f, indent=2)
+
+    return excel_file, json_file
+
+
+
+
+
+
+
+
+
+
+
+
+
 import streamlit as st
 from pdf2image import convert_from_path
 import pytesseract
