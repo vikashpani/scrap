@@ -1,3 +1,46 @@
+def enrich_with_descriptions(segments_dict, chain):
+    enriched_segments = {}
+
+    for segment, data in segments_dict.items():
+        # Join all field names together and send one LLM call per segment
+        fields = data.get("fields", [])
+        
+        # Prepare input prompt: ask for description of all fields at once
+        joined_fields = ", ".join(fields)
+        prompt = f"Describe the following fields for the EDI segment '{segment}': {joined_fields}"
+
+        # Trigger LLM ONCE per segment
+        enriched_text = chain.run(prompt)
+
+        # Split back the enriched descriptions intelligently (you can refine this logic)
+        enriched_fields = enriched_text.split(",") if "," in enriched_text else [enriched_text]
+
+        # Map each original field with its enriched description (fallback if count mismatch)
+        descriptions = {}
+        for i, field in enumerate(fields):
+            desc = enriched_fields[i].strip() if i < len(enriched_fields) else ""
+            descriptions[field] = desc
+
+        # Store back in result
+        enriched_segments[segment] = {
+            "fields": fields,
+            "descriptions": descriptions
+        }
+
+    return enriched_segments
+
+
+
+
+
+
+
+
+
+
+
+
+
 def export_output(data_rows, output_path="out/output_segments.xlsx"):
     """
     Export rows to separate Excel sheets based on segment extracted by `extract_bold_field_name`.
