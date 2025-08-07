@@ -1,3 +1,194 @@
+import streamlit as st
+from pdf2image import convert_from_path
+import pytesseract
+from langchain_core.documents import Document
+from langchain.vectorstores import FAISS
+from langchain.embeddings import HuggingFaceBgeEmbeddings
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.chat_models import AzureChatOpenAI
+from langchain.chains import RetrievalQA
+import pandas as pd
+import json
+import os
+
+# === OCR FUNCTION FOR PDF ===
+def extract_text_from_pdf_with_ocr(pdf_path, poppler_path=None):
+    images = convert_from_path(pdf_path, poppler_path=poppler_path)
+    docs = []
+    for i, img in enumerate(images):
+        try:
+            text = pytesseract.image_to_string(img)
+            page_text = f"\n[Page {i+1}]\n{text.strip()}"
+            docs.append(Document(page_content=page_text))
+        except Exception as e:
+            print(f"OCR failed on page {i+1}: {e}")
+    return docs
+
+# === VECTOR INDEX ===
+def create_vector_index(docs, index_path):
+    embedding_model = HuggingFaceBgeEmbeddings(
+        model_name="BAAI/bge-large-en",
+        model_kwargs={'device': 'cpu'},
+        encode_kwargs={'normalize_embeddings': False}
+    )
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    chunks = splitter.split_documents(docs)
+    db = FAISS.from_documents(chunks, embedding_model)
+    db.save_local(index_path)
+    return db
+
+# === LOAD VECTOR INDEX + QA CHAIN ===
+def get_retrieval_qa_chain(index_path, azure_api_key, azure_endpoint):
+    embedding_model = HuggingFaceBgeEmbeddings(
+        model_name="BAAI/bge-large-en",
+        model_kwargs={"device": "cpu"},
+        encode_kwargs={"normalize_embeddings": False}
+    )
+    db = FAISS.load_local(index_path, embedding_model)
+    llm = AzureChatOpenAI(
+        azure_endpoint=azure_endpoint,
+        api_key=azure_api_key,
+        deployment_name="gpt-4",
+        api_version="2023-05-15",
+        temperature=0
+    )
+    retriever = db.as_retriever()
+    chain = RetrievalQA.from_chain_type(llm=llm, retriever=retriever)
+    return chain
+
+# === PARSE RAW EDI ===
+def parse_edi_file(edi_text):
+    segments = edi_text.split("~")
+    data = []
+    for seg in segments:
+        parts = seg.strip().split("*")
+        if len(parts) > 1:
+            data.append({"segment": parts[0], "fields": parts[1:]})
+    return data
+
+# === LLM-ASSISTED SEGMENT + FIELD ANNOTATION ===
+def enrich_with_descriptions(data, chain):
+    enriched = []
+    for entry in data:
+        segment = entry["segment"]
+        fields = entry["fields"]
+        try:
+            seg_question = f"In an EDI file, what does the segment '{segment}' represent?"
+            seg_description = chain.run(seg_question)
+        except Exception:
+            seg_description = "Not available"
+        
+        field_names = []
+        for idx, field in enumerate(fields):
+            try:
+                field_question = f"In the EDI segment '{segment}', what does field number {idx + 1} represent?"
+                field_description = chain.run(field_question)
+            except Exception:
+                field_description = f"Field{idx+1}"
+            field_names.append((field_description, field))
+        
+        enriched.append({
+            "segment": segment,
+            "description": seg_description,
+            "fields": field_names
+        })
+    return enriched
+
+# === EXPORT TO EXCEL + JSON ===
+def export_output(data, base_name):
+    rows = []
+    for item in data:
+        row = {
+            "Segment": item["segment"],
+            "Description": item["description"]
+        }
+        for desc, val in item["fields"]:
+            row[desc] = val
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+    excel_file = f"{base_name}.xlsx"
+    json_file = f"{base_name}.json"
+    df.to_excel(excel_file, index=False)
+
+    with open(json_file, "w") as f:
+        json.dump(data, f, indent=2)
+
+    return excel_file, json_file
+
+
+# ===================
+# ==== STREAMLIT ====
+# ===================
+
+st.set_page_config(page_title="EDI Data Extractor", layout="wide")
+st.title("📑 Intelligent EDI Data Extractor")
+
+# === SIDEBAR CONFIG ===
+st.sidebar.header("⚙️ Configuration")
+edi_type = st.sidebar.selectbox("Select EDI Format", ["837I", "820"])
+pdf_file = st.sidebar.file_uploader("Upload Companion Guide PDF", type=["pdf"], key="pdf")
+generate_index = st.sidebar.button("🔁 Generate/Update Vector Index")
+
+azure_key = st.sidebar.text_input("Azure OpenAI API Key", type="password")
+azure_endpoint = st.sidebar.text_input("Azure OpenAI Endpoint")
+
+# === INDEX CHECK ===
+index_dir = "indices"
+index_path = os.path.join(index_dir, f"{edi_type}_index")
+index_exists = os.path.exists(os.path.join(index_path, "index.faiss"))
+
+# === GENERATE INDEX IF NEEDED ===
+if generate_index:
+    if not pdf_file:
+        st.sidebar.warning("Please upload a companion guide PDF.")
+    else:
+        os.makedirs(index_dir, exist_ok=True)
+        with open("temp.pdf", "wb") as f:
+            f.write(pdf_file.read())
+        with st.spinner("Running OCR and creating vector index..."):
+            docs = extract_text_from_pdf_with_ocr("temp.pdf")
+            create_vector_index(docs, index_path)
+        st.sidebar.success("Vector index created successfully.")
+        index_exists = True
+
+# === MAIN APP AREA ===
+st.subheader(f"📂 Upload and Extract from {edi_type} EDI File")
+edi_file = st.file_uploader("Upload EDI File (.txt)", type=["txt"], key="edi")
+extract_button = st.button("📤 Extract Data to Excel")
+
+if extract_button:
+    if not edi_file:
+        st.error("Please upload an EDI file.")
+    elif not azure_key or not azure_endpoint:
+        st.error("Please provide Azure API Key and Endpoint in the sidebar.")
+    elif not index_exists:
+        st.warning(f"No index found for {edi_type}. Please upload PDF and generate the index from sidebar.")
+    else:
+        with st.spinner("Processing..."):
+            edi_text = edi_file.read().decode("utf-8")
+            segments = parse_edi_file(edi_text)
+            chain = get_retrieval_qa_chain(index_path, azure_key, azure_endpoint)
+            enriched = enrich_with_descriptions(segments, chain)
+            xls_file, json_file = export_output(enriched, edi_type)
+        st.success("Extraction complete!")
+        with open(xls_file, "rb") as f:
+            st.download_button("📥 Download Excel", f, file_name=xls_file)
+        with open(json_file, "rb") as f:
+            st.download_button("📥 Download JSON", f, file_name=json_file)
+
+
+
+
+
+
+
+
+
+
+
+
+
 def process_edi_files(edi_files):
     import json
 
