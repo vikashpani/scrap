@@ -1,3 +1,135 @@
+import streamlit as st
+import pandas as pd
+import re
+import os
+from io import BytesIO
+
+st.set_page_config(page_title="837I vs 820 Claim Comparison", layout="wide")
+
+# --- Helper functions to parse 837I ---
+def parse_837i(content):
+    claims = []
+    segments = content.split("~")
+    
+    first_name = last_name = claim_id = claim_amount = None
+    
+    for seg in segments:
+        if seg.startswith("NM1*IL"):
+            parts = seg.split("*")
+            last_name = parts[3] if len(parts) > 3 else ""
+            first_name = parts[4] if len(parts) > 4 else ""
+        
+        elif seg.startswith("CLM"):
+            parts = seg.split("*")
+            claim_id = parts[1] if len(parts) > 1 else ""
+            claim_amount = parts[2] if len(parts) > 2 else ""
+            
+            if first_name and last_name and claim_id and claim_amount:
+                claims.append({
+                    "FirstName": first_name,
+                    "LastName": last_name,
+                    "ClaimID": claim_id,
+                    "ClaimAmount": claim_amount
+                })
+                claim_id = claim_amount = None  # reset for next claim
+                
+    return pd.DataFrame(claims)
+
+# --- Helper functions to parse 820 ---
+def parse_820(content):
+    payments = []
+    segments = content.split("~")
+    
+    first_name = last_name = claim_id = claim_amount = None
+    
+    for seg in segments:
+        if seg.startswith("NM1*QE"):
+            parts = seg.split("*")
+            last_name = parts[3] if len(parts) > 3 else ""
+            first_name = parts[4] if len(parts) > 4 else ""
+        
+        elif seg.startswith("RMR*IK"):
+            parts = seg.split("*")
+            claim_id = parts[2] if len(parts) > 2 else ""
+        
+        elif seg.startswith("AMT*"):
+            parts = seg.split("*")
+            if parts[0] == "AMT" or parts[0].startswith("AMT"):
+                claim_amount = parts[2] if len(parts) > 2 else ""
+            
+            if first_name and last_name and claim_id and claim_amount:
+                payments.append({
+                    "FirstName": first_name,
+                    "LastName": last_name,
+                    "ClaimID": claim_id,
+                    "ClaimAmount": claim_amount
+                })
+                claim_id = claim_amount = None
+                
+    return pd.DataFrame(payments)
+
+# --- Comparison logic ---
+def compare_claims(df837, df820):
+    results = []
+    for _, row in df837.iterrows():
+        match = df820[
+            (df820["FirstName"].str.lower() == row["FirstName"].lower()) &
+            (df820["LastName"].str.lower() == row["LastName"].lower()) &
+            (df820["ClaimID"].str.strip() == row["ClaimID"].strip()) &
+            (df820["ClaimAmount"].astype(str).str.strip() == str(row["ClaimAmount"]).strip())
+        ]
+        if match.empty:
+            status = "Member not found in 820"
+        else:
+            status = "Match found"
+        
+        result_row = row.to_dict()
+        result_row["Status"] = status
+        results.append(result_row)
+    return pd.DataFrame(results)
+
+# --- Streamlit UI ---
+st.sidebar.header("Upload EDI Files")
+file_837 = st.sidebar.file_uploader("Upload 837I EDI File", type=["txt", "edi"])
+file_820 = st.sidebar.file_uploader("Upload 820 EDI File", type=["txt", "edi"])
+
+if file_837 and file_820:
+    content_837 = file_837.read().decode("utf-8", errors="ignore")
+    content_820 = file_820.read().decode("utf-8", errors="ignore")
+    
+    df837 = parse_837i(content_837)
+    df820 = parse_820(content_820)
+    
+    st.write("### Parsed 837I Claims")
+    st.dataframe(df837)
+    st.write("### Parsed 820 Claims")
+    st.dataframe(df820)
+    
+    comparison_df = compare_claims(df837, df820)
+    st.write("### Comparison Results")
+    st.dataframe(comparison_df)
+    
+    # Create Excel with one sheet per subscriber
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        for name, group in comparison_df.groupby(["FirstName", "LastName"]):
+            sheet_name = f"{name[0]}_{name[1]}"[:31]  # Excel sheet name limit
+            group.to_excel(writer, index=False, sheet_name=sheet_name)
+    
+    st.download_button(
+        label="Download Excel Report",
+        data=output.getvalue(),
+        file_name="837I_vs_820_Comparison.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+
+
+
+
+
+
+
 # app.py
 import os
 import streamlit as st
