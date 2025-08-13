@@ -1,3 +1,129 @@
+# app.py
+import os
+import streamlit as st
+from langchain.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.vectorstores import FAISS
+from langchain.docstore import InMemoryDocstore
+from langchain.embeddings import AzureOpenAIEmbeddings
+from langchain.chat_models import AzureChatOpenAI
+from langchain.schema import HumanMessage
+import tempfile
+import shutil
+
+# ---------------------------
+# Streamlit sidebar inputs
+# ---------------------------
+st.set_page_config(page_title="EDI Companion Guide Ingestion", layout="wide")
+st.sidebar.header("Upload Companion Guide")
+
+edi_type = st.sidebar.selectbox("EDI Type", ["837i", "820"])
+uploaded_file = st.sidebar.file_uploader("Upload Companion Guide (PDF)", type=["pdf"])
+test_query = st.sidebar.text_input("Test retrieval query")
+process_button = st.sidebar.button("Process Guide")
+
+# ---------------------------
+# Azure settings from env/secrets
+# ---------------------------
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY", st.secrets.get("AZURE_OPENAI_API_KEY"))
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", st.secrets.get("AZURE_OPENAI_ENDPOINT"))
+AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", st.secrets.get("AZURE_OPENAI_API_VERSION"))
+EMBEDDING_DEPLOYMENT = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", st.secrets.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT"))
+CHAT_DEPLOYMENT = os.getenv("AZURE_OPENAI_GPT_DEPLOYMENT", st.secrets.get("AZURE_OPENAI_GPT_DEPLOYMENT"))
+
+# ---------------------------
+# Helper functions
+# ---------------------------
+def get_embeddings():
+    return AzureOpenAIEmbeddings(
+        deployment=EMBEDDING_DEPLOYMENT,
+        model="text-embedding-3-large",
+        openai_api_key=AZURE_OPENAI_API_KEY,
+        openai_api_base=AZURE_OPENAI_ENDPOINT,
+        openai_api_type="azure",
+        openai_api_version=AZURE_OPENAI_API_VERSION
+    )
+
+def get_llm():
+    return AzureChatOpenAI(
+        deployment_name=CHAT_DEPLOYMENT,
+        temperature=0,
+        openai_api_key=AZURE_OPENAI_API_KEY,
+        openai_api_base=AZURE_OPENAI_ENDPOINT,
+        openai_api_type="azure",
+        openai_api_version=AZURE_OPENAI_API_VERSION
+    )
+
+def load_pdf(file):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        tmp.write(file.read())
+        tmp_path = tmp.name
+    loader = PyPDFLoader(tmp_path)
+    docs = loader.load()
+    os.remove(tmp_path)
+    return docs
+
+def chunk_documents(documents, chunk_size=1000, chunk_overlap=100):
+    splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    return splitter.split_documents(documents)
+
+def save_faiss_index(vectorstore, edi_type):
+    save_path = f"vectorstores/{edi_type}"
+    os.makedirs(save_path, exist_ok=True)
+    vectorstore.save_local(save_path)
+
+def load_faiss_index(edi_type):
+    path = f"vectorstores/{edi_type}"
+    if os.path.exists(path):
+        return FAISS.load_local(path, get_embeddings(), allow_dangerous_deserialization=True)
+    return None
+
+# ---------------------------
+# Processing
+# ---------------------------
+if process_button and uploaded_file:
+    st.write(f"Processing {edi_type} companion guide...")
+
+    # Load & chunk
+    docs = load_pdf(uploaded_file)
+    chunks = chunk_documents(docs)
+
+    # Create vectorstore
+    embeddings = get_embeddings()
+    vectorstore = FAISS.from_documents(chunks, embeddings, docstore=InMemoryDocstore({}))
+
+    # Save index
+    save_faiss_index(vectorstore, edi_type)
+    st.success(f"FAISS index for {edi_type} saved successfully.")
+
+# ---------------------------
+# Test retrieval
+# ---------------------------
+if test_query:
+    vs = load_faiss_index(edi_type)
+    if vs:
+        results = vs.similarity_search(test_query, k=3)
+        st.write("### Top matches from FAISS index:")
+        for i, r in enumerate(results, 1):
+            st.markdown(f"**Result {i}:**\n```\n{r.page_content}\n```")
+    else:
+        st.error(f"No FAISS index found for {edi_type}. Please process a guide first.")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import pandas as pd
 import json
 
