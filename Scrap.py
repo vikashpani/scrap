@@ -3,6 +3,180 @@ import pandas as pd
 import re
 import os
 from io import BytesIO
+from collections import defaultdict
+
+# ---------- Parsing Functions ----------
+
+def parse_837i(file_content):
+    """Parse 837I EDI content into structured data grouped by provider."""
+    providers_data = defaultdict(list)
+    current_provider = None
+    current_subscriber = None
+
+    lines = file_content.split("~")
+    for line in lines:
+        segments = line.strip().split("*")
+
+        if segments[0] == "NM1" and segments[1] == "41":
+            current_provider = segments[2] if len(segments) > 2 else "UNKNOWN_PROVIDER"
+
+        if segments[0] == "NM1" and segments[1] == "IL":
+            current_subscriber = {
+                "firstname": segments[4] if len(segments) > 4 else "",
+                "lastname": segments[3] if len(segments) > 3 else "",
+                "claim_id": "",
+                "member_id": "",
+                "claim_amount": "",
+                "type": ""
+            }
+
+        if segments[0] == "CLM":
+            claim_type = segments[1].split("-")[0][-1]  # 'C' or 'P'
+            if claim_type.upper() == "C":
+                claim_id = segments[1].split("-")[1]
+                amount = segments[2]
+                current_subscriber["claim_id"] = claim_id
+                current_subscriber["type"] = "C"
+                current_subscriber["claim_amount"] = amount
+            elif claim_type.upper() == "P":
+                member_id = segments[1].split("-")[1]
+                amount = segments[2]
+                current_subscriber["member_id"] = member_id
+                current_subscriber["type"] = "P"
+                current_subscriber["claim_amount"] = amount
+            providers_data[current_provider].append(current_subscriber)
+
+    return providers_data
+
+
+def parse_820(file_content):
+    """Parse 820 EDI content into structured data."""
+    records = []
+    lines = file_content.split("~")
+    current_payee = None
+    current_member_id = None
+    current_claim_id = None
+    current_amount = None
+
+    for line in lines:
+        segments = line.strip().split("*")
+
+        if segments[0] == "NM1" and segments[1] == "QE":
+            current_payee = segments[3] + " " + segments[4] if len(segments) > 4 else segments[3]
+            current_member_id = segments[-1]
+
+        if segments[0] == "RMR" and segments[1] == "IK":
+            current_claim_id = segments[2]
+
+        if segments[0] == "AMT" and segments[1] == "R8":
+            current_amount = segments[2]
+            records.append({
+                "payee": current_payee.strip(),
+                "member_id": current_member_id.strip(),
+                "claim_id": current_claim_id.strip() if current_claim_id else "",
+                "amount": current_amount.strip()
+            })
+            current_claim_id = None
+            current_amount = None
+
+    return records
+
+# ---------- Comparison Logic ----------
+
+def compare_837i_820(providers_data, all_820_data):
+    """Compare 837I providers data with all 820 data."""
+    result_per_provider = defaultdict(list)
+
+    for provider, claims in providers_data.items():
+        for claim in claims:
+            match_found = False
+            found_in_file = None
+
+            for fname, records in all_820_data.items():
+                for rec in records:
+                    if claim["type"] == "C" and claim["claim_id"] and rec["claim_id"] == claim["claim_id"]:
+                        match_found = True
+                        found_in_file = fname
+                        break
+                    elif claim["type"] == "P" and claim["member_id"] and rec["member_id"] == claim["member_id"]:
+                        match_found = True
+                        found_in_file = fname
+                        break
+                if match_found:
+                    break
+
+            claim_result = claim.copy()
+            claim_result["found_in"] = found_in_file if match_found else "Member not found in 820"
+            result_per_provider[provider].append(claim_result)
+
+    return result_per_provider
+
+# ---------- Excel Export ----------
+
+def create_excel(provider_results, filename):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        total_claims = 0
+        summary_rows = []
+        
+        for provider, claims in provider_results.items():
+            df = pd.DataFrame(claims)
+            df.to_excel(writer, sheet_name=provider[:31], index=False)
+            total_claims += len(claims)
+            unique_users = len(set([f"{c['firstname']} {c['lastname']}" for c in claims]))
+            summary_rows.append({
+                "Provider": provider,
+                "Total Claims": len(claims),
+                "Unique Users": unique_users
+            })
+        
+        # Summary sheet
+        pd.DataFrame(summary_rows).to_excel(writer, sheet_name="Report", index=False)
+
+    return output.getvalue()
+
+# ---------- Streamlit App ----------
+
+st.title("837I vs 820 Claims Comparison")
+
+st.sidebar.header("Upload EDI Files")
+uploaded_837i_files = st.sidebar.file_uploader("Upload 837I files", type=["txt"], accept_multiple_files=True)
+uploaded_820_files = st.sidebar.file_uploader("Upload 820 files", type=["txt"], accept_multiple_files=True)
+
+if uploaded_837i_files and uploaded_820_files:
+    # Parse all 820 first
+    all_820_data = {}
+    for file in uploaded_820_files:
+        content = file.read().decode("utf-8")
+        all_820_data[file.name] = parse_820(content)
+
+    # Process each 837I and compare
+    for file in uploaded_837i_files:
+        content = file.read().decode("utf-8")
+        providers_data = parse_837i(content)
+        provider_results = compare_837i_820(providers_data, all_820_data)
+        excel_data = create_excel(provider_results, file.name)
+        
+        st.download_button(
+            label=f"Download Excel for {file.name}",
+            data=excel_data,
+            file_name=f"{os.path.splitext(file.name)[0]}_comparison.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+
+
+
+
+
+
+
+
+import streamlit as st
+import pandas as pd
+import re
+import os
+from io import BytesIO
 
 st.set_page_config(page_title="837I vs 820 Claim Comparison", layout="wide")
 
