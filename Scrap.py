@@ -1,3 +1,48 @@
+
+import os
+import pandas as pd
+
+def create_excel(provider_results, filename):
+    # Ensure output folder exists
+    output_folder = "output_reports"
+    os.makedirs(output_folder, exist_ok=True)
+
+    # Build output file path
+    file_path = os.path.join(output_folder, f"{os.path.splitext(filename)[0]}_results.xlsx")
+
+    total_claims = 0
+    summary_rows = []
+
+    with pd.ExcelWriter(file_path, engine='xlsxwriter') as writer:
+        for provider, claims in provider_results.items():
+            df = pd.DataFrame(claims)
+            df.to_excel(writer, sheet_name=provider[:31], index=False)
+            total_claims += len(claims)
+
+            unique_users = len(set([f"{c['firstname']} {c['lastname']}" for c in claims]))
+            summary_rows.append({
+                "Provider": provider,
+                "Total Claims": len(claims),
+                "Unique Users": unique_users
+            })
+
+        # Summary sheet
+        pd.DataFrame(summary_rows).to_excel(writer, sheet_name="Report", index=False)
+
+    return file_path
+
+
+
+
+
+
+
+
+
+
+
+
+
 import streamlit as st
 import pandas as pd
 import re
