@@ -1,3 +1,426 @@
+# app.py
+import streamlit as st
+import pandas as pd
+import re
+import os
+from decimal import Decimal, InvalidOperation
+from collections import defaultdict
+from typing import Dict, List, Tuple
+
+st.set_page_config(page_title="837I ↔ 820 Comparison (Strict match)", layout="wide")
+
+# -------------------
+# Utilities
+# -------------------
+def norm_str(x):
+    return (x or "").strip()
+
+def sanitize_sheet_name(name: str) -> str:
+    if not name:
+        return "UNKNOWN"
+    s = re.sub(r'[\[\]\*\?\/\\:]', "_", name)
+    return s[:31]
+
+def to_decimal(x):
+    if x is None:
+        return None
+    s = str(x).replace(",", "").strip()
+    if s == "":
+        return None
+    try:
+        return Decimal(s)
+    except InvalidOperation:
+        return None
+
+def equal_amounts(a, b):
+    aa = to_decimal(a)
+    bb = to_decimal(b)
+    if aa is None or bb is None:
+        return False
+    return aa == bb
+
+def name_match(first1, last1, first2, last2):
+    return norm_str(first1).upper() == norm_str(first2).upper() and norm_str(last1).upper() == norm_str(last2).upper()
+
+# -------------------
+# Parsers
+# -------------------
+
+def parse_837i(content: str) -> Dict[str, List[dict]]:
+    """
+    Parse 837I content and return providers dict:
+      provider_name -> list of claims dicts:
+        {
+          "Provider", "FirstName", "LastName", "Type"("C"|"P"), "ClaimID", "MemberID", "Amount"
+        }
+    """
+    providers = defaultdict(list)
+    current_provider = None
+    current_first = ""
+    current_last = ""
+
+    for raw in content.split("~"):
+        seg = raw.strip()
+        if not seg:
+            continue
+        parts = seg.split("*")
+        if len(parts) < 1:
+            continue
+
+        # Provider: NM1*41*...
+        if parts[0] == "NM1" and len(parts) >= 4 and parts[1] == "41":
+            current_provider = norm_str(parts[3])
+
+        # Subscriber: NM1*IL*1*LAST*FIRST...
+        elif parts[0] == "NM1" and len(parts) >= 5 and parts[1] == "IL":
+            current_last = norm_str(parts[3])
+            current_first = norm_str(parts[4])
+
+        # Claim: CLM*<token>*<amount>...
+        elif parts[0] == "CLM" and len(parts) >= 3:
+            clm01 = parts[1]
+            amt = norm_str(parts[2])
+            claim_type = ""
+            claim_id = ""
+            member_id = ""
+
+            # Patterns in your examples: "C-<claimid>-..." or "P-<memberid>-..."
+            if clm01.startswith("C-"):
+                claim_type = "C"
+                m = re.match(r"^C-([^-\s]+)", clm01)
+                if m:
+                    claim_id = m.group(1)
+            elif clm01.startswith("P-"):
+                claim_type = "P"
+                m = re.match(r"^P-([^-\s]+)", clm01)
+                if m:
+                    member_id = m.group(1)
+                    # optional normalization: drop trailing single uppercase letter (if present and desirable)
+                    if len(member_id) > 1 and re.match(r".*[A-Z]$", member_id) and re.search(r"\d", member_id[:-1]):
+                        # only strip if it ends with a letter and there is a digit earlier (safe heuristic)
+                        member_id = member_id[:-1]
+
+            if current_provider is None:
+                current_provider = "UNKNOWN_PROVIDER"
+
+            record = {
+                "Provider": current_provider,
+                "FirstName": current_first,
+                "LastName": current_last,
+                "Type": claim_type,
+                "ClaimID": claim_id,
+                "MemberID": member_id,
+                "Amount": amt
+            }
+            providers[current_provider].append(record)
+
+    return providers
+
+def parse_820(content: str) -> Dict[str, List[dict]]:
+    """
+    Parse 820 content to extract RMR*IK rows and associate them with nearest prior NM1*QE (if any).
+    Returns:
+      {
+        "payees": set(payee names),
+        "records": [ {"ClaimID":..., "Amount":..., "MemberID":..., "FirstName":..., "LastName":...}, ... ]
+      }
+    """
+    records = []
+    payees = set()
+    current_qe_first = ""
+    current_qe_last = ""
+    current_qe_memberid = ""
+
+    for raw in content.split("~"):
+        seg = raw.strip()
+        if not seg:
+            continue
+        parts = seg.split("*")
+        if len(parts) < 1:
+            continue
+
+        # N1*PE or NM1*PE can contain payee name (optional)
+        if parts[0] == "N1" and len(parts) >= 3 and parts[1] == "PE":
+            payee_name = norm_str(parts[2])
+            if payee_name:
+                payees.add(payee_name)
+        if parts[0] == "NM1" and len(parts) >= 4 and parts[1] == "PE":
+            # NM1*PE*2*PAYEENAME...
+            payee_name = norm_str(parts[3])
+            if payee_name:
+                payees.add(payee_name)
+
+        # NM1*QE sets context for subsequent RMR rows; last element is often member id
+        if parts[0] == "NM1" and len(parts) >= 3 and parts[1] == "QE":
+            # Typical: NM1*QE*1*LAST*FIRST*...*N*<memberid>
+            # We'll try to set last and first with available fields
+            if len(parts) >= 5:
+                current_qe_last = norm_str(parts[3])
+                current_qe_first = norm_str(parts[4])
+            else:
+                # fallback: try to split the single name field into last/first
+                name_field = norm_str(parts[3]) if len(parts) >= 4 else ""
+                if name_field:
+                    # try splitting by space: last is first token, rest first name
+                    tokens = name_field.split()
+                    if len(tokens) >= 2:
+                        current_qe_last = tokens[0]
+                        current_qe_first = " ".join(tokens[1:])
+                    else:
+                        current_qe_last = name_field
+                        current_qe_first = ""
+            # The member id is often last element
+            current_qe_memberid = norm_str(parts[-1]) if len(parts) >= 1 else ""
+
+        # RMR*IK core row
+        if parts[0] == "RMR" and len(parts) >= 3 and parts[1] == "IK":
+            claim_id = norm_str(parts[2])  # may be blank for P-premium submissions
+            amount = ""
+            # find first numeric-like element after p[2]
+            for elem in parts[3:]:
+                if re.match(r'^[\+\-]?\d+(?:\.\d+)?$', elem.strip()):
+                    amount = elem.strip()
+                    break
+
+            rec = {
+                "ClaimID": claim_id,
+                "Amount": amount,
+                "MemberID": current_qe_memberid,
+                "FirstName": current_qe_first,
+                "LastName": current_qe_last
+            }
+            records.append(rec)
+
+    return {"payees": payees, "records": records}
+
+# -------------------
+# Comparison logic (strict: id/member AND names AND amount)
+# -------------------
+
+def compare_providers_vs_820(providers_data: Dict[str, List[dict]], parsed_820_files: List[Tuple[str, dict]]):
+    """
+    providers_data: provider -> list of claim dicts (from parse_837i)
+    parsed_820_files: list of (filename, parsed_dict) where parsed_dict = parse_820(...)
+    Returns: provider -> list of result rows (dictionaries)
+    """
+    results = defaultdict(list)
+
+    # Build per-file indexes (do not merge files; we need filename where match found)
+    per_file_indexes = []
+    for fname, parsed in parsed_820_files:
+        claim_index = defaultdict(list)
+        member_index = defaultdict(list)
+        # Also store name-indexed records for strict checking if needed
+        for r in parsed["records"]:
+            cid = norm_str(r.get("ClaimID",""))
+            mid = norm_str(r.get("MemberID",""))
+            amt = norm_str(r.get("Amount",""))
+            # index by claim id (if present)
+            if cid:
+                claim_index[cid].append(r)
+            # index by member id (if present)
+            if mid:
+                member_index[mid].append(r)
+        per_file_indexes.append((fname, parsed["payees"], claim_index, member_index))
+
+    # Iterate every provider claim and attempt find first match across 820 files
+    for provider, claims in providers_data.items():
+        for c in claims:
+            p_first = c.get("FirstName","")
+            p_last = c.get("LastName","")
+            p_type = c.get("Type","")
+            p_claimid = norm_str(c.get("ClaimID",""))
+            p_memberid = norm_str(c.get("MemberID",""))
+            p_amount = norm_str(c.get("Amount",""))
+
+            matched = False
+            matched_file = ""
+            matched_rec = None
+            status = "Member not found in 820"
+
+            for fname, payees, claim_index, member_index in per_file_indexes:
+                # For C-type: match ClaimID presence AND names AND amount
+                if p_type == "C" and p_claimid:
+                    candidates = claim_index.get(p_claimid, [])
+                    for cand in candidates:
+                        # require names and amount to match
+                        if name_match(p_first, p_last, cand.get("FirstName",""), cand.get("LastName","")) and equal_amounts(p_amount, cand.get("Amount","")):
+                            matched = True
+                            matched_file = fname
+                            matched_rec = cand
+                            break
+                    if matched:
+                        status = "Match found"
+                        break
+
+                # For P-type: match MemberID and names and amount
+                if p_type == "P" and p_memberid:
+                    candidates = member_index.get(p_memberid, [])
+                    for cand in candidates:
+                        if name_match(p_first, p_last, cand.get("FirstName",""), cand.get("LastName","")) and equal_amounts(p_amount, cand.get("Amount","")):
+                            matched = True
+                            matched_file = fname
+                            matched_rec = cand
+                            break
+                    if matched:
+                        status = "Match found"
+                        break
+
+                # If neither candidate or types missing, continue to next 820 file
+
+            # Build output row
+            row = {
+                "Provider": provider,
+                "FirstName": p_first,
+                "LastName": p_last,
+                "Type": p_type,
+                "ClaimID": p_claimid,
+                "MemberID": p_memberid,
+                "Amount_837I": p_amount,
+                "Matched_820_File": matched_file if matched else "",
+                "Amount_820": matched_rec.get("Amount","") if matched_rec else "",
+                "820_FirstName": matched_rec.get("FirstName","") if matched_rec else "",
+                "820_LastName": matched_rec.get("LastName","") if matched_rec else "",
+                "Status": status
+            }
+            results[provider].append(row)
+
+    return results
+
+# -------------------
+# Excel writer (saves to output_reports/)
+# -------------------
+
+def save_excel(provider_results: Dict[str, List[dict]], basename: str, output_dir="output_reports"):
+    os.makedirs(output_dir, exist_ok=True)
+    out_path = os.path.join(output_dir, f"{os.path.splitext(basename)[0]}_comparison.xlsx")
+
+    provider_summary = []
+    users_rows = []
+
+    with pd.ExcelWriter(out_path, engine="xlsxwriter") as writer:
+        for provider, rows in provider_results.items():
+            df = pd.DataFrame(rows)
+            # Dedupe subscriber duplicate rows by key columns
+            if not df.empty:
+                df = df.drop_duplicates(subset=["FirstName","LastName","Type","ClaimID","MemberID","Amount_837I"])
+            sheet_name = sanitize_sheet_name(provider)
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+            total_claims = df.shape[0]
+            unique_users = sorted(set((r["LastName"], r["FirstName"]) for r in rows))
+            provider_summary.append({"Provider": provider, "TotalClaims": total_claims, "UniqueUsersCount": len(unique_users)})
+
+            for ln, fn in unique_users:
+                cnt = df[(df["LastName"] == ln) & (df["FirstName"] == fn)].shape[0]
+                users_rows.append({"Provider": provider, "UserLastName": ln, "UserFirstName": fn, "UserClaimCount": cnt})
+
+        # Write Report sheet
+        report_df = pd.DataFrame(provider_summary) if provider_summary else pd.DataFrame(columns=["Provider","TotalClaims","UniqueUsersCount"])
+        users_df = pd.DataFrame(users_rows) if users_rows else pd.DataFrame(columns=["Provider","UserLastName","UserFirstName","UserClaimCount"])
+
+        report_df.to_excel(writer, sheet_name="Report", index=False, startrow=0)
+        # Write users table below
+        startrow = len(report_df) + 3 if not report_df.empty else 3
+        if not users_df.empty:
+            ws = writer.sheets["Report"]
+            ws.write(startrow - 1, 0, "Unique Users per Provider")
+            users_df.to_excel(writer, sheet_name="Report", index=False, startrow=startrow)
+
+    return out_path
+
+# -------------------
+# Streamlit UI
+# -------------------
+
+st.title("837I ↔ 820 Comparison (strict id/member + name + amount)")
+
+with st.sidebar:
+    st.header("Upload files")
+    files_837 = st.file_uploader("Upload 837I files (multiple)", type=["txt","edi"], accept_multiple_files=True)
+    files_820 = st.file_uploader("Upload 820 files (multiple)", type=["txt","edi"], accept_multiple_files=True)
+    run = st.button("Run Comparison")
+
+if run:
+    if not files_837 or not files_820:
+        st.error("Please upload at least one 837I file and one 820 file.")
+    else:
+        # Read & parse all 820 files (preserve their order)
+        parsed_820 = []
+        st.info("Parsing 820 files...")
+        for f in files_820:
+            txt = f.read().decode("utf-8", errors="ignore")
+            parsed = parse_820(txt)
+            parsed_820.append((f.name, parsed))
+            st.write(f"- {f.name}: RMR rows = {len(parsed['records'])}; payees detected = {', '.join(sorted(parsed['payees'])) if parsed['payees'] else '(none)'}")
+
+        saved_files = []
+        st.info("Processing 837I files and comparing...")
+        for f in files_837:
+            txt = f.read().decode("utf-8", errors="ignore")
+            providers = parse_837i(txt)
+
+            # preview
+            with st.expander(f"837I preview: {f.name} (Providers & claims)"):
+                for prov, rows in providers.items():
+                    st.write(f"Provider: {prov} — claims: {len(rows)}")
+                    if rows:
+                        st.dataframe(pd.DataFrame(rows).head(30))
+
+            # compare
+            results = compare_providers_vs_820(providers, parsed_820)
+
+            # Save excel
+            outpath = save_excel(results, f.name, output_dir="output_reports")
+            saved_files.append(outpath)
+
+            # Show Report sheet in UI
+            # Recreate Report and Users tables same as save_excel does
+            provider_summary = []
+            users_rows = []
+            for prov, rows in results.items():
+                df = pd.DataFrame(rows).drop_duplicates(subset=["FirstName","LastName","Type","ClaimID","MemberID","Amount_837I"]) if rows else pd.DataFrame()
+                total_claims = df.shape[0]
+                unique_users = sorted(set((r["LastName"], r["FirstName"]) for r in rows))
+                provider_summary.append({"Provider": prov, "TotalClaims": total_claims, "UniqueUsersCount": len(unique_users)})
+                for ln, fn in unique_users:
+                    cnt = df[(df["LastName"] == ln) & (df["FirstName"] == fn)].shape[0]
+                    users_rows.append({"Provider": prov, "UserLastName": ln, "UserFirstName": fn, "UserClaimCount": cnt})
+
+            st.subheader(f"Report for {f.name}")
+            if provider_summary:
+                report_df = pd.DataFrame(provider_summary)
+                st.dataframe(report_df, use_container_width=True)
+            else:
+                st.write("No providers/claims found in this 837I file.")
+
+            if users_rows:
+                st.write("Unique users per provider:")
+                users_df = pd.DataFrame(users_rows)
+                st.dataframe(users_df, use_container_width=True)
+
+            # Optionally show detailed comparisons
+            with st.expander(f"Detailed comparisons for {f.name}"):
+                for prov, rows in results.items():
+                    st.write(f"Provider: {prov}")
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True)
+
+        # Final message
+        outdir = os.path.abspath("output_reports")
+        st.success(f"Reports saved to folder: {outdir}")
+        st.write("Saved files:")
+        for p in saved_files:
+            st.write(f"• {os.path.basename(p)}")
+
+
+
+
+
+
+
+
+
+
 
 import os
 import pandas as pd
