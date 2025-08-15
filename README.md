@@ -1,3 +1,100 @@
+Chapter 1: Introduction and Objectives
+1.1 Background
+
+Software testing is a fundamental activity in ensuring the quality and reliability of software systems. In real-world projects, Python and Java are among the most widely used programming languages, each with mature testing frameworks—Pytest for Python and JUnit for Java. While these frameworks enable structured automated testing, they still rely on developers to manually write test cases, which is time-consuming, prone to human error, and difficult to scale for large codebases.
+
+This limitation becomes more significant in agile and continuous integration environments, where frequent code changes require constant test updates. Without an efficient automated test generation process, maintaining high test coverage and ensuring code quality becomes increasingly challenging.
+
+1.2 Problem Statement
+
+The primary challenges in manual and semi-automated test creation for Python and Java projects are:
+
+High Manual Effort – Developers must spend considerable time writing tests for each function or method, especially for edge cases.
+
+Error-Prone Process – Manually written tests may omit important conditions or fail to account for rare scenarios.
+
+Scalability Limitations – Large codebases with frequent changes require a high volume of updated tests, which is impractical manually.
+
+Lack of Feedback Utilization – Most existing tools do not adapt or refine test cases based on execution results.
+
+Fragmented Tooling – Developers must integrate multiple tools for code compilation, test execution, and coverage reporting, increasing complexity.
+
+1.3 Proposed Solution
+
+To address these challenges, this project implements a LangGraph-powered automated test generation system that focuses exclusively on Python (Pytest) and Java (JUnit) codebases.
+
+The system, developed in TestGenV6.py, automates the entire pipeline:
+
+Parses and detects the programming language from selected source files.
+
+Validates syntax or compilation errors before test generation.
+
+Generates framework-compliant tests using LLM prompts tailored for Pytest and JUnit.
+
+Executes tests using Pytest (Python) or Maven (Java) and collects coverage reports.
+
+Analyzes failures and iteratively refines failing tests via a feedback loop.
+
+This integration of AI-powered test generation with execution feedback transforms the traditionally manual process into an automated, adaptive, and repeatable workflow.
+
+1.4 Scope of the Project
+
+The scope of this work is limited to:
+
+Languages: Python and Java only.
+
+Frameworks: Pytest (Python) and JUnit (Java, run with Maven and JaCoCo coverage).
+
+Automation Level: Fully automated pipeline from parsing source files to saving final coverage reports.
+
+User Interaction: A Streamlit-based interface that allows:
+
+File selection from a directory.
+
+Test generation and execution initiation.
+
+Real-time log monitoring.
+
+Viewing embedded coverage reports.
+
+1.5 Objectives
+
+As per the abstract submission, the objectives were:
+
+Automated Test Case Generation – Use LLM to generate initial tests from Python and Java source code.
+
+Integrated Compilation and Execution – Automatically compile and execute generated tests via Pytest or Maven.
+
+Feedback-Driven Refinement – Analyze failures and refine tests through iterative LLM invocations.
+
+LangGraph Workflow Orchestration – Implement the system using LangGraph to manage stateful, modular nodes.
+
+Multi-Language Support – Handle both Python and Java in a single workflow.
+
+Interactive UI – Provide a user-friendly Streamlit interface with live logs and embedded coverage reports.
+
+1.6 Objectives Achieved
+
+All the above objectives have been met in the current implementation:
+
+Python Support – Fully functional Pytest generation, execution, and coverage via pytest-cov.
+
+Java Support – Fully functional JUnit test generation and execution with Maven and JaCoCo HTML reports.
+
+Workflow Automation – LangGraph state machine controls parsing, compilation, generation, execution, feedback analysis, and output reporting.
+
+Feedback Loop – Captures concise failure summaries and uses them to improve failing tests within a set retry limit.
+
+Single Interface – A unified Streamlit front-end for both Python and Java workflows.
+
+Coverage Reporting – Generates and embeds HTML coverage reports directly in the UI for quick review.
+
+
+
+
+
+
+
 
 import re
 import json
