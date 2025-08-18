@@ -1,3 +1,87 @@
+import os
+
+def update_service_date_in_folder(folder_path: str, new_service_date: str, output_folder: str):
+    """
+    Update service dates in EDI files inside a folder.
+    
+    - Institutional claims (837I) → update DTP*434
+    - Professional claims (837P) → update DTP*472
+    
+    Args:
+        folder_path (str): Path to the folder containing EDI files.
+        new_service_date (str): New date of service (YYYYMMDD).
+        output_folder (str): Path to save updated files.
+    """
+
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    for filename in os.listdir(folder_path):
+        if not filename.lower().endswith((".edi", ".txt")):
+            continue  # Skip non-EDI files
+
+        input_file = os.path.join(folder_path, filename)
+        output_file = os.path.join(output_folder, filename)
+
+        with open(input_file, "r") as f:
+            edi_content = f.read()
+
+        segments = edi_content.split("~")
+        updated_segments = []
+        claim_type = None
+
+        for seg in segments:
+            if seg.startswith("ST*837*"):
+                if "005010X223A2" in edi_content:  
+                    claim_type = "Institutional"
+                elif "005010X222A1" in edi_content:  
+                    claim_type = "Professional"
+
+            if claim_type == "Institutional" and seg.startswith("DTP*434*"):
+                parts = seg.split("*")
+                if len(parts) >= 3:
+                    parts[-1] = new_service_date
+                    seg = "*".join(parts)
+
+            elif claim_type == "Professional" and seg.startswith("DTP*472*"):
+                parts = seg.split("*")
+                if len(parts) >= 3:
+                    parts[-1] = new_service_date
+                    seg = "*".join(parts)
+
+            updated_segments.append(seg)
+
+        updated_edi = "~".join(updated_segments)
+
+        with open(output_file, "w") as f:
+            f.write(updated_edi)
+
+        print(f"✅ Updated {filename} and saved to {output_file}")
+
+
+# Example usage:
+# folder with edi files = "input_edi"
+# updated files will go to "output_edi"
+# new service date = "20250818"
+
+update_service_date_in_folder(
+    folder_path="input_edi",
+    new_service_date="20250818",
+    output_folder="output_edi"
+)
+
+
+
+
+
+
+
+
+
+
+
+
+
 # app.py
 import streamlit as st
 import pandas as pd
