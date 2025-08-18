@@ -1,4 +1,224 @@
 import os
+import re
+import json
+import pandas as pd
+import pytesseract
+from pdf2image import convert_from_path
+from langchain_openai import AzureChatOpenAI
+from langchain.schema import Document
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+# =============== STEP 1: PDF Extraction ==================
+def extract_pdf(pdf_path, poppler_path=None):
+    images = convert_from_path(pdf_path, poppler_path=poppler_path)
+    docs = []
+
+    for i, img in enumerate(images):
+        try:
+            text = pytesseract.image_to_string(img)
+            page_text = f"\n[Page {i+1}]\n{text.strip()}"
+            docs.append(Document(page_content=page_text))
+        except Exception as e:
+            print(f"OCR failed on page {i+1}: {e}")
+    return docs
+
+
+# =============== STEP 2: Chunking ==================
+def chunk_documents(docs, chunk_size=1500, overlap=200):
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=overlap)
+    chunks = []
+    for doc in docs:
+        chunks.extend(text_splitter.split_documents([doc]))
+    return chunks
+
+
+# =============== STEP 3: Build Rules with LLM ==================
+def build_rules_from_chunks(chunks, llm):
+    rules = []
+    for i, chunk in enumerate(chunks):
+        prompt = f"""
+        You are given part of an EDI implementation guideline.
+        Extract validation rules for segments and fields.
+        Rules must include:
+        - Segment name
+        - Field position
+        - Usage (Required / Situational / Not Used)
+        - Short description
+
+        Text:
+        {chunk.page_content}
+
+        Return JSON list of rules.
+        """
+        resp = llm.invoke(prompt)
+        try:
+            parsed = json.loads(resp.content)
+            rules.extend(parsed)
+        except Exception:
+            print(f"Failed to parse chunk {i}")
+    return rules
+
+
+# =============== STEP 4: Store Rules ==================
+def save_rules(rules, output_path="rules.json"):
+    with open(output_path, "w") as f:
+        json.dump(rules, f, indent=2)
+    print(f"Rules stored at {output_path}")
+
+
+# =============== STEP 5: Validate Uploaded EDI ==================
+def validate_edi(edi_file, rules, llm):
+    results = []
+    with open(edi_file, "r") as f:
+        edi_lines = f.readlines()
+
+    for line in edi_lines:
+        seg_id = line.split("*")[0]
+        matching_rules = [r for r in rules if r.get("segment") == seg_id]
+
+        if not matching_rules:
+            results.append({
+                "edi_line": line.strip(),
+                "rule_line": None,
+                "status": "Invalid",
+                "reason": "No matching rule for this segment"
+            })
+            continue
+
+        # Let LLM validate field-level usage
+        prompt = f"""
+        Validate this EDI line against the rules.
+
+        EDI line:
+        {line.strip()}
+
+        Rules:
+        {json.dumps(matching_rules, indent=2)}
+
+        Respond JSON:
+        {{
+          "status": "Matched/Invalid",
+          "rule_line": "...",
+          "reason": "one-line reason"
+        }}
+        """
+        resp = llm.invoke(prompt)
+        try:
+            parsed = json.loads(resp.content)
+            parsed["edi_line"] = line.strip()
+            results.append(parsed)
+        except Exception:
+            results.append({
+                "edi_line": line.strip(),
+                "rule_line": None,
+                "status": "Error",
+                "reason": "LLM parse failure"
+            })
+
+    return results
+
+
+# =============== STEP 6: Dump to Excel ==================
+def dump_to_excel(results, output_path="validation_results.xlsx"):
+    df = pd.DataFrame(results)
+    df.to_excel(output_path, index=False)
+    print(f"Validation results saved to {output_path}")
+
+
+# =============== STEP 7: HTML Highlight ==================
+def generate_html(results, output_path="validation_report.html"):
+    html_lines = []
+    for res in results:
+        if res["status"] == "Invalid":
+            html_lines.append(
+                f"<p style='color:red;' title='{res['reason']}'>{res['edi_line']}</p>"
+            )
+        else:
+            html_lines.append(
+                f"<p style='color:green;' title='{res['reason']}'>{res['edi_line']}</p>"
+            )
+    with open(output_path, "w") as f:
+        f.write("<html><body>" + "\n".join(html_lines) + "</body></html>")
+    print(f"HTML report saved to {output_path}")
+
+
+# ================= RUN ==================
+if __name__ == "__main__":
+    # Azure OpenAI Config
+    llm = AzureChatOpenAI(
+        deployment_name="gpt-4o",  # change to your deployment
+        temperature=0,
+        api_version="2024-05-01-preview"
+    )
+
+    # Step 1 & 2: Extract + Chunk
+    docs = extract_pdf("EDI_Guideline.pdf", poppler_path="C:/poppler/bin")
+    chunks = chunk_documents(docs)
+
+    # Step 3 & 4: Build + Save Rules
+    rules = build_rules_from_chunks(chunks, llm)
+    save_rules(rules)
+
+    # Step 5: Validate
+    results = validate_edi("sample.edi", rules, llm)
+
+    # Step 6: Excel
+    dump_to_excel(results)
+
+    # Step 7: HTML
+    generate_html(results)
+
+
+
+# =============== STEP 4B: Load Rules ==================
+def load_rules(input_path="rules.json"):
+    if os.path.exists(input_path):
+        with open(input_path, "r") as f:
+            return json.load(f)
+    return None
+
+
+# ================= RUN ==================
+if __name__ == "__main__":
+    # Azure OpenAI Config
+    llm = AzureChatOpenAI(
+        deployment_name="gpt-4o",  # change to your deployment name
+        temperature=0,
+        api_version="2024-05-01-preview"
+    )
+
+    # Step 3 & 4: Build rules only if not found locally
+    rules = load_rules("rules.json")
+    if rules:
+        print("✅ Loaded rules from local rules.json")
+    else:
+        print("⚡ No local rules found, extracting from PDF...")
+        docs = extract_pdf("EDI_Guideline.pdf", poppler_path="C:/poppler/bin")
+        chunks = chunk_documents(docs)
+        rules = build_rules_from_chunks(chunks, llm)
+        save_rules(rules, "rules.json")
+
+    # Step 5: Validate EDI
+    results = validate_edi("sample.edi", rules, llm)
+
+    # Step 6: Excel
+    dump_to_excel(results, "validation_results.xlsx")
+
+    # Step 7: HTML
+    generate_html(results, "validation_report.html")
+
+
+
+
+
+
+
+
+
+
+
+
+import os
 
 def update_service_date_in_folder(folder_path: str, new_service_date: str, output_folder: str):
     """
