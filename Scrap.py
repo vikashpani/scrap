@@ -1,3 +1,44 @@
+
+prompt = f"""
+You are validating an EDI segment against rules.
+
+Interpretation rules:
+- "Required" means the field must exist in the segment. Even if the value is "00" or empty string symbols like "00", "ZZ", it is still valid as long as it is a standard code or allowed value.
+- "Situational" means the field may be present or absent depending on conditions. If no condition is given in the rule, then both present and absent are acceptable.
+- "Not Used" means the field must be blank or omitted.
+- Never flag standard EDI codes like "00", "01", "ZZ" as empty values.
+- Only mark as invalid if the field is missing entirely, in the wrong position, or violates a clearly defined situational dependency.
+
+EDI line:
+{line.strip()}
+
+Fields:
+{fields}
+
+Rules:
+{json.dumps(matching_rules, indent=2)}
+
+Respond only in JSON (no explanation):
+
+{{
+  "status": "Matched" or "Invalid",
+  "rule_line": "matching rule or None",
+  "reason": "one-line reason"
+}}
+"""
+
+
+
+
+
+
+
+
+
+
+
+
+
 prompt = f"""
 You are an EDI 837/ISA segment validator.
 
