@@ -1,3 +1,65 @@
+from langchain_openai import AzureChatOpenAI
+from langchain.prompts import ChatPromptTemplate
+
+# Initialize Azure OpenAI model
+llm = AzureChatOpenAI(
+    deployment_name="your-deployment-name",  # e.g., "gpt-4"
+    model="gpt-4",
+    temperature=0,
+    openai_api_version="2023-05-15",
+    azure_endpoint="https://YOUR-RESOURCE-NAME.openai.azure.com/",
+    api_key="YOUR-AZURE-OPENAI-KEY"
+)
+
+# Prompt template
+prompt_template = ChatPromptTemplate.from_template("""
+You are validating EDI segments against rules.
+
+### Segment:
+{segment}
+
+### Rules:
+{rules}
+
+### Task:
+1. Check if this segment follows the rules.
+2. If valid, return JSON:
+   {{
+     "segment": "{segment}",
+     "matched_rule": "<exact rule line>",
+     "reason": "Valid because ..."
+   }}
+3. If invalid, return JSON:
+   {{
+     "segment": "{segment}",
+     "matched_rule": null,
+     "reason": "Invalid because <explanation>"
+   }}
+""")
+
+def validate_segment(segment: str, rules: str):
+    prompt = prompt_template.format(segment=segment, rules=rules)
+    response = llm.predict(prompt)
+    return response
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import os
 import re
 import json
