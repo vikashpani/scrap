@@ -1,3 +1,51 @@
+prompt = f"""
+You are an EDI 837/ISA segment validator.
+
+Validate this EDI line against the provided rules and fields.
+
+EDI line:
+{line.strip()}
+
+Fields extracted (with positions):
+{fields}
+
+Rules for this segment (from implementation guide):
+{json.dumps(matching_rules, indent=2)}
+
+Validation rules to apply:
+1. If a field is marked as "Required", it must have a non-empty value in the EDI line. If missing → Invalid.
+2. If a field is marked as "Not Used", it must always be empty. If it has a value → Invalid.
+3. If a field is marked as "Situational":
+   - If the rule description specifies a condition (e.g. "Required when field X = Y"), check that condition.
+   - If condition is met → value must be present.
+   - If condition is not met or no condition is described → the field may be empty or filled, both are valid.
+
+Respond strictly in JSON with the following format:
+{{
+  "status": "Matched" or "Invalid",
+  "rule_line": "The rule line from the guide that matched or failed",
+  "reason": "One-line explanation of why it is valid or invalid"
+}}
+"""
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ISA*00*
 
 *00*
