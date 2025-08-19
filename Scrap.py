@@ -1,3 +1,72 @@
+
+import json
+
+isa_rules = [
+    {'SegmentName': 'ISA', 'FieldPosition': 1, 'Usage': 'Required',
+     'ShortDescription': 'Authorization Information Qualifier'},
+    {'SegmentName': 'ISA', 'FieldPosition': 2, 'Usage': 'Required',
+     'ShortDescription': 'Authorization Information'},
+    {'SegmentName': 'ISA', 'FieldPosition': 3, 'Usage': 'Required',
+     'ShortDescription': 'Security Information Qualifier'},
+    {'SegmentName': 'ISA', 'FieldPosition': 4, 'Usage': 'Required',
+     'ShortDescription': 'Security Information'},
+    {'SegmentName': 'ISA', 'FieldPosition': 14, 'Usage': 'Situational',
+     'ShortDescription': 'Acknowledgment requested'},
+    {'SegmentName': 'ISA', 'FieldPosition': 15, 'Usage': 'Required',
+     'ShortDescription': 'Test Indicator'},
+    {'SegmentName': 'ISA', 'FieldPosition': 16, 'Usage': 'Required',
+     'ShortDescription': 'Subelement Separator'}
+]
+
+edi_line = "ISA*00*          *01*SECRET    *ZZ*SUBMITTERS.ID*ZZ*RECEIVERS.ID*030101*1253*^*00501*000000905*1*T*:~"
+fields = edi_line.split("*")
+
+def validate_isa(fields, rules):
+    results = []
+    for rule in rules:
+        pos = rule['FieldPosition']
+        idx = pos  # our rules already give int position
+        
+        # Prepare rule line text
+        rule_line = f"{rule['SegmentName']}{pos} - {rule['ShortDescription']} ({rule['Usage']})"
+        
+        if idx >= len(fields):
+            results.append({
+                "status": "Invalid",
+                "rule_line": rule_line,
+                "reason": "Field missing in EDI"
+            })
+            continue
+
+        value = fields[idx].strip()
+        if rule['Usage'] == "Required" and not value:
+            results.append({
+                "status": "Invalid",
+                "rule_line": rule_line,
+                "reason": "Required field empty"
+            })
+        else:
+            results.append({
+                "status": "Matched",
+                "rule_line": rule_line,
+                "reason": "Field present and valid"
+            })
+    return results
+
+# Run validation
+validation_output = validate_isa(fields, isa_rules)
+
+# Pretty print JSON
+print(json.dumps(validation_output, indent=2))
+
+
+
+
+
+
+
+
+
 def validate_isa(fields, rules):
     errors = []
     for rule in rules:
