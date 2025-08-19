@@ -1,3 +1,54 @@
+Business Problem
+
+Large contractual documents (often 100+ pages) make manual review and test-case creation time-consuming and error-prone.
+
+No automated pipeline in place to extract meaningful insights or generate test cases.
+
+VDI restrictions (no command prompt, no Docker, limited installations) slowed down setup and testing.
+
+Difficulty in persisting vector indexes across sessions → loss of reusability.
+
+Incomplete coverage: RAG model currently generates only 5–6 test cases per run, not yet covering the full contract.
+
+Solution
+
+Built a RAG-based pipeline using FAISS (instead of Qdrant due to VDI restrictions).
+
+Enabled multi-file support: storing filename, JSON output, and FAISS index locally for reuse.
+
+Implemented persistent FAISS index management to allow continuation across multiple sessions.
+
+Used distance metrics in FAISS (instead of cosine similarity in Qdrant) while still maintaining good retrieval quality.
+
+Automated test case generation from contractual clauses with structured JSON output.
+
+Designed a scalable architecture where additional models or embeddings can be plugged in.
+
+Impact
+
+Automation: Reduced manual effort in test-case extraction from large contracts.
+
+Reusability: Persistent FAISS indexes ensure previously processed contracts don’t need re-ingestion.
+
+Scalability: Multi-file support allows batch processing of contracts.
+
+Efficiency: Faster experimentation by bypassing VDI installation issues (moved from Qdrant to FAISS).
+
+Foundation built: Even though coverage is partial (5–6 test cases vs full contract), the pipeline is ready for refinement.
+
+Future-proofing: Clear roadmap to improve accuracy, coverage, and eventually deploy in cloud (bypassing VDI restrictions).
+
+
+
+
+
+
+
+
+
+
+
+
 Chapter 1: Introduction and Objectives
 1.1 Background
 
