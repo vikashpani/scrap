@@ -1,3 +1,38 @@
+def validate_isa(fields, rules):
+    errors = []
+    for rule in rules:
+        pos = rule['FieldPosition']
+        # Handle if rule uses numbers
+        if isinstance(pos, int):
+            idx = pos  # field index in split
+        elif pos.startswith("ISA"):
+            idx = int(pos.replace("ISA", ""))  # e.g. ISA14 → 14
+        else:
+            continue
+
+        if idx >= len(fields):
+            errors.append(f"Missing field {pos}: {rule['ShortDescription']}")
+            continue
+
+        value = fields[idx]
+        if rule['Usage'] == "Required" and not value.strip():
+            errors.append(f"Field {pos} ({rule['ShortDescription']}) is required but empty")
+
+    return errors
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 prompt = f"""
 You are validating an EDI segment against rules.
