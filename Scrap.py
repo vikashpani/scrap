@@ -1,3 +1,473 @@
+import os
+import re
+import json
+from typing import List, Dict, Any, Tuple
+from langchain_openai import AzureChatOpenAI
+
+# =========================
+# Azure OpenAI (LangChain)
+# =========================
+def get_azure_llm() -> AzureChatOpenAI:
+    """
+    Configure Azure OpenAI via LangChain. Reads creds from environment.
+    Required env vars:
+      - AZURE_OPENAI_ENDPOINT
+      - AZURE_OPENAI_API_KEY
+      - AZURE_OPENAI_API_VERSION (e.g. 2024-05-01-preview)
+      - AZURE_OPENAI_DEPLOYMENT (e.g. "gpt-4o")
+    """
+    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    api_key = os.getenv("AZURE_OPENAI_API_KEY")
+    api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-05-01-preview")
+    deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
+
+    if not endpoint or not api_key:
+        raise RuntimeError(
+            "Missing Azure OpenAI configuration. "
+            "Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY."
+        )
+
+    llm = AzureChatOpenAI(
+        azure_endpoint=endpoint,
+        api_key=api_key,
+        api_version=api_version,
+        deployment_name=deployment,
+        temperature=0,
+    )
+    return llm
+
+# =========================
+# EDI Parsing Utilities
+# =========================
+def parse_edi_file(edi_text: str) -> List[Dict[str, Any]]:
+    """
+    Split by '~' into segments. Each segment split by '*'.
+    Returns list of dicts: {segment, line, fields}
+    - fields[0] is the segment name (e.g., 'ISA')
+    - positions 1..n map to fields[1..n]
+    """
+    segments = []
+    for raw in edi_text.split("~"):
+        line = raw.strip()
+        if not line:
+            continue
+        parts = line.split("*")
+        seg = parts[0].strip()
+        segments.append({"segment": seg, "line": line, "fields": parts})
+    return segments
+
+def normalize_position(field_position: Any, segment_name: str) -> int:
+    """
+    Normalize a rule's FieldPosition to a 1-based integer:
+    Accepts: 1, "1", "01", "001", "ISA01", "ISA1", "SegmentName01", "NM101", etc.
+    Returns integer position (1..N). Raises ValueError if no digits found.
+    """
+    if field_position is None:
+        raise ValueError("FieldPosition is None")
+
+    s = str(field_position).strip()
+
+    # If it's purely digits (e.g., "1", "01", "001")
+    if s.isdigit():
+        return int(s)
+
+    # Common forms: "ISA01", "ISA1", "NM101", "REF02", "SegmentName15"
+    # Extract trailing digits
+    m = re.search(r"(\d+)$", s)
+    if m:
+        return int(m.group(1))
+
+    # Edge case: "segmentname01" with varying case
+    s_upper = s.upper()
+    seg_upper = segment_name.upper()
+    if s_upper.startswith(seg_upper):
+        tail = s[len(segment_name):]
+        m2 = re.search(r"(\d+)$", tail)
+        if m2:
+            return int(m2.group(1))
+
+    raise ValueError(f"Cannot normalize FieldPosition='{field_position}' for {segment_name}")
+
+def unique_rule_positions(rules_for_segment: List[Dict[str, Any]], segment_name: str) -> List[int]:
+    """
+    Deduplicate rule positions that are the same spot with different notations (01, 1, ISA01, etc.)
+    Returns sorted unique integer positions.
+    """
+    pos_set = set()
+    for r in rules_for_segment:
+        try:
+            p = normalize_position(r.get("FieldPosition"), segment_name)
+            pos_set.add(p)
+        except Exception:
+            # Ignore malformed positions; we won't validate those
+            pass
+    return sorted(pos_set)
+
+# =========================
+# Validation Core
+# =========================
+def validate_required(value: str) -> Tuple[bool, str]:
+    if value is None:
+        return False, "Required field missing (no element at this position)."
+    if str(value).strip() == "":
+        return False, "Required field empty."
+    return True, "Required field present."
+
+def validate_not_used(value: str) -> Tuple[bool, str]:
+    if value is None or str(value).strip() == "":
+        return True, "Field correctly not used."
+    return False, f"Field marked 'Not Used' but value '{value}' found."
+
+def validate_situational_with_llm(
+    llm: AzureChatOpenAI,
+    segment_name: str,
+    position: int,
+    value: str,
+    description: str,
+    all_fields: List[str],
+    edi_line: str
+) -> Dict[str, Any]:
+    """
+    Ask LLM to judge situational validity following your rules:
+      - If description has an explicit condition referencing other fields, obey it.
+      - If no explicit condition is present in description, BOTH present or absent are valid.
+      - 'Not Used' logic never applies here (this is situational branch).
+      - Treat standard EDI codes like '00','01','ZZ','T','P' as legitimate values (not 'empty').
+    """
+    # Build field map for clarity (1-based)
+    field_map = {f"{segment_name}{i}": (all_fields[i] if i < len(all_fields) else "")
+                 for i in range(1, len(all_fields))}
+
+    prompt = f"""
+You are an EDI validator. Validate one situational field based ONLY on the given description and values.
+
+Rules for interpretation:
+- "Situational" = conditionally required. If the description specifies a condition (e.g., depends on another field), check it.
+- If NO explicit condition is present in the description, BOTH present and absent are valid.
+- Do not treat legitimate codes like "00", "01", "ZZ", "T", "P" as empty.
+- Only use information from the provided inputs. Do not invent extra conditions.
+
+Segment: {segment_name}
+Field Position: {position}
+Field Tag: {segment_name}{position}
+Field Value: {value}
+Description: {description}
+
+All Fields (1-based map):
+{json.dumps(field_map, indent=2)}
+
+EDI Line:
+{edi_line}
+
+Respond ONLY JSON, no markdown, no extra text:
+{{
+  "status": "Matched" or "Invalid",
+  "rule_line": "{segment_name}{position}",
+  "reason": "one-line reason"
+}}
+""".strip()
+
+    resp = llm.invoke(prompt)
+    content = (resp.content or "").strip()
+    try:
+        data = json.loads(content)
+        # Guardrails for schema
+        st = data.get("status")
+        rl = data.get("rule_line", f"{segment_name}{position}")
+        rs = data.get("reason", "Situational check done.")
+        if st not in ("Matched", "Invalid"):
+            raise ValueError("Bad status from LLM.")
+        return {"status": st, "rule_line": rl, "edi_line": edi_line, "reason": rs}
+    except Exception:
+        # Fallback: if LLM fails, default to permissive per your policy
+        ok = (value is None) or (str(value).strip() == "") or (str(value).strip() != "")
+        return {
+            "status": "Matched" if ok else "Invalid",
+            "rule_line": f"{segment_name}{position}",
+            "edi_line": edi_line,
+            "reason": "Situational check fallback: no explicit condition enforced."
+        }
+
+def validate_segment_against_rules(
+    segment: Dict[str, Any],
+    rules_for_segment: List[Dict[str, Any]],
+    llm: AzureChatOpenAI
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """
+    Validate one parsed segment against its rules.
+    Returns:
+      - field_results: list of {status, rule_line, edi_line, reason}
+      - segment_summary: {status, ediline, reason}
+    """
+    seg_name = segment["segment"]
+    line = segment["line"]
+    fields = segment["fields"]  # fields[0] == seg_name; positions start at 1
+
+    # Deduplicate positions & pre-check for extra elements
+    rule_positions = unique_rule_positions(rules_for_segment, seg_name)
+    max_rule_pos = max(rule_positions) if rule_positions else 0
+
+    field_results: List[Dict[str, Any]] = []
+
+    # If there are more elements than rules cover (beyond max position), mark as extras
+    if len(fields) - 1 > max_rule_pos:
+        # For each extra position > max_rule_pos, mark as invalid (no rule defined)
+        for i in range(max_rule_pos + 1, len(fields)):
+            field_results.append({
+                "status": "Invalid",
+                "rule_line": f"{seg_name}{i}",
+                "edi_line": line,
+                "reason": f"Extra element at position {i} without a defined rule."
+            })
+
+    # Validate per rule
+    for rule in rules_for_segment:
+        usage = str(rule.get("Usage", "")).strip().lower()
+        desc = str(rule.get("ShortDescription", "")).strip()
+        try:
+            pos = normalize_position(rule.get("FieldPosition"), seg_name)
+        except Exception:
+            # If we cannot normalize, skip but record an issue
+            field_results.append({
+                "status": "Invalid",
+                "rule_line": f"{seg_name}{rule.get('FieldPosition')}",
+                "edi_line": line,
+                "reason": "Unrecognized FieldPosition format in rules."
+            })
+            continue
+
+        # Fetch value at position (1-based)
+        value = fields[pos] if pos < len(fields) else None
+        rule_line = f"{seg_name}{pos}"
+
+        # Required
+        if usage == "required":
+            ok, reason = validate_required(value)
+            field_results.append({
+                "status": "Matched" if ok else "Invalid",
+                "rule_line": rule_line,
+                "edi_line": line,
+                "reason": reason
+            })
+            continue
+
+        # Not Used
+        if usage == "not used":
+            ok, reason = validate_not_used(value)
+            field_results.append({
+                "status": "Matched" if ok else "Invalid",
+                "rule_line": rule_line,
+                "edi_line": line,
+                "reason": reason
+            })
+            continue
+
+        # Situational → LLM
+        if usage == "situational":
+            field_results.append(
+                validate_situational_with_llm(
+                    llm=llm,
+                    segment_name=seg_name,
+                    position=pos,
+                    value=value if value is not None else "",
+                    description=desc,
+                    all_fields=fields,
+                    edi_line=line
+                )
+            )
+            continue
+
+        # Any other usage → treat as optional/valid
+        field_results.append({
+            "status": "Matched",
+            "rule_line": rule_line,
+            "edi_line": line,
+            "reason": "Optional field (no strict validation)."
+        })
+
+    # Build segment summary
+    invalids = [r for r in field_results if r["status"] == "Invalid"]
+    if not invalids:
+        segment_summary = {
+            "status": "Matched",
+            "ediline": line,
+            "reason": "All required, situational, and not-used fields validated successfully."
+        }
+    else:
+        segment_summary = {
+            "status": "Invalid",
+            "ediline": line,
+            "reason": "; ".join(dict.fromkeys([r["reason"] for r in invalids]))  # unique-preserving
+        }
+
+    return field_results, segment_summary
+
+# =========================
+# Segment Summary via LLM
+# =========================
+def summarize_segment_with_llm(
+    llm: AzureChatOpenAI,
+    edi_line: str,
+    field_results: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    Ask LLM to produce the final single-dict summary with:
+      - status: "Matched" if all fields matched, else "Invalid"
+      - ediline: the original segment line
+      - reason: one-line reason (either all good, or concise failures)
+    """
+    prompt = f"""
+Summarize these field-level EDI validation results into ONE JSON dictionary.
+Rules:
+- If ALL fields are "Matched" -> status = "Matched".
+- If ANY field is "Invalid" -> status = "Invalid".
+- 'ediline' must equal the original EDI line verbatim.
+- 'reason' must be a single concise line. If invalid, mention the most important failure(s).
+
+EDI line:
+{edi_line}
+
+Field results:
+{json.dumps(field_results, indent=2)}
+
+Respond ONLY JSON, no markdown:
+{{
+  "status": "Matched" or "Invalid",
+  "ediline": "{edi_line}",
+  "reason": "<one line>"
+}}
+""".strip()
+
+    resp = llm.invoke(prompt)
+    content = (resp.content or "").strip()
+    try:
+        data = json.loads(content)
+        # guardrails
+        if "status" not in data or "ediline" not in data or "reason" not in data:
+            raise ValueError("Missing keys.")
+        if data["status"] not in ("Matched", "Invalid"):
+            raise ValueError("Bad status.")
+        return data
+    except Exception:
+        # Local fallback mirroring the same rules
+        any_invalid = any(r["status"] == "Invalid" for r in field_results)
+        if any_invalid:
+            return {
+                "status": "Invalid",
+                "ediline": edi_line,
+                "reason": "; ".join(dict.fromkeys([r["reason"] for r in field_results if r["status"] == "Invalid"]))
+            }
+        return {
+            "status": "Matched",
+            "ediline": edi_line,
+            "reason": "All required, situational, and not-used fields validated successfully."
+        }
+
+# =========================
+# Example Driver
+# =========================
+def load_rules_from_json(path: str) -> List[Dict[str, Any]]:
+    """
+    Expects a list of dicts, each having:
+      - SegmentName
+      - FieldPosition (e.g., 1, "01", "ISA01", "NM101")
+      - Usage ("Required" | "Situational" | "Not Used" | ...)
+      - ShortDescription
+    """
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def run_validation(edi_text: str, rules: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Validates all segments in the EDI text with their respective rules.
+    Returns list of per-segment summaries (each: {status, ediline, reason}).
+    """
+    llm = get_azure_llm()
+    segments = parse_edi_file(edi_text)
+
+    # Group rules by segment
+    rules_by_segment: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rules:
+        seg = str(r.get("SegmentName", "")).strip()
+        if not seg:
+            continue
+        rules_by_segment.setdefault(seg, []).append(r)
+
+    summaries: List[Dict[str, Any]] = []
+
+    for seg in segments:
+        seg_name = seg["segment"]
+        if seg_name not in rules_by_segment:
+            # No rules for this segment -> single Invalid record or treat as pass?
+            # We'll mark as Invalid with reason for transparency.
+            summaries.append({
+                "status": "Invalid",
+                "ediline": seg["line"],
+                "reason": f"No rules defined for segment '{seg_name}'."
+            })
+            continue
+
+        field_results, local_summary = validate_segment_against_rules(
+            segment=seg,
+            rules_for_segment=rules_by_segment[seg_name],
+            llm=llm
+        )
+
+        # Option: Let LLM craft the final single-dict summary (with fallback)
+        final_summary = summarize_segment_with_llm(llm, seg["line"], field_results)
+
+        # Ensure we always return exactly the requested keys/types
+        summaries.append({
+            "status": final_summary["status"],
+            "ediline": final_summary["ediline"],
+            "reason": final_summary["reason"]
+        })
+
+    return summaries
+
+# =========================
+# __main__
+# =========================
+if __name__ == "__main__":
+    # ---- Example usage ----
+    # 1) Load rules from a local JSON file (produced from your PDF pipeline)
+    #    e.g., rules.json = [
+    #      {"SegmentName":"ISA","FieldPosition":"ISA01","Usage":"Required","ShortDescription":"Authorization Information Qualifier"},
+    #      {"SegmentName":"ISA","FieldPosition":"ISA14","Usage":"Situational","ShortDescription":"Acknowledgment can be requested through data element ISA14."},
+    #      {"SegmentName":"ISA","FieldPosition":"ISA15","Usage":"Required","ShortDescription":"Test Indicator"},
+    #      {"SegmentName":"ISA","FieldPosition":"ISA16","Usage":"Required","ShortDescription":"Component Element Separator"}
+    #    ]
+    RULES_PATH = "rules.json"
+    rules_list = load_rules_from_json(RULES_PATH)
+
+    # 2) Read an EDI file (raw text)
+    #    Example single line shown; in real use, read a whole file with multiple segments.
+    edi_text = (
+        "ISA*00*          *00*          *ZZ*SENDERID      *ZZ*RECEIVERID    *250101*1253*^*00501*000000905*1*T*:~"
+        "GS*HC*SENDER*RECEIVER*20250101*1253*1*X*005010X222A1~"
+        "ST*837*0001*005010X222A1~"
+    )
+
+    # 3) Run validation (returns list of per-segment summaries)
+    summaries = run_validation(edi_text, rules_list)
+
+    # 4) Print results
+    print(json.dumps(summaries, indent=2))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import json
 
