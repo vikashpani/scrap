@@ -1,3 +1,112 @@
+
+Business Idea
+
+Problem Context (Real-World Issue):
+In the healthcare industry, payers (like MetroPlus Health Plan) and providers exchange massive volumes of EDI (Electronic Data Interchange) files — particularly 837I (Institutional Claims) from providers and 820 (Payment/Remittance) files from payers.
+
+Providers often complain that claims submitted (837I) don’t reconcile properly with payments received (820).
+
+Manual reconciliation is time-consuming, error-prone, and delays revenue cycle operations, leading to disputes, cash flow issues, and administrative waste.
+
+For payers like MetroPlus, mismatches can result in duplicate claims, overpayment/underpayment, and compliance risks.
+
+Business Idea:
+Build a streamlined reconciliation system that automatically compares 837I claims with 820 remittance files, highlighting discrepancies in Claim IDs, Member IDs, Names, and Amounts.
+
+Target Users:
+
+Health Plans (MetroPlus, Medicaid/Medicare contractors, etc.)
+
+Hospitals/Providers (Revenue cycle teams, billing departments)
+
+Value Proposition: Reduce claim-payment mismatches, accelerate reconciliation, and provide audit-ready reports.
+
+2. Solution
+
+Core Features in Current App:
+
+Upload multiple 837I and 820 files.
+
+Parse EDI files into structured data (extracting Provider, Patient/Member, Claim ID, Amounts, ADX adjustment codes).
+
+Perform strict matching on:
+
+Claim ID ↔ Claim ID
+
+Member ID ↔ Member ID
+
+Name ↔ Name
+
+Amount ↔ Amount
+
+Highlight discrepancies (missing claims, mismatched payments, duplicates).
+
+Generate Excel reports per provider:
+
+Summary (claims vs matched payments).
+
+Unique patients served.
+
+Detailed side-by-side reconciliation.
+
+Technology Used:
+
+Streamlit → interactive web UI for non-technical users.
+
+Python (Pandas + Regex parsing) → extract and compare EDI data.
+
+Excel Reports (xlsxwriter) → ready for finance/revenue cycle teams.
+
+Why it’s a solution for MetroPlus Health Care:
+MetroPlus processes hundreds of thousands of claims monthly. Currently, reconciliation is semi-manual and prone to error. This tool can:
+
+Automate matching between 837I claims vs 820 payments.
+
+Provide real-time dashboards & reports for provider payments.
+
+Support audit and compliance with CMS/DOH regulations.
+
+3. Impact
+
+For Providers (Hospitals, Clinics):
+
+Reduce payment delays by instantly spotting missing or mismatched claims.
+
+Free up staff hours wasted on manual reconciliation.
+
+Improve cash flow predictability.
+
+For MetroPlus Health Plan:
+
+Prevent duplicate or incorrect payments.
+
+Reduce provider disputes and call center escalations.
+
+Strengthen audit compliance by maintaining clean claim-payment trails.
+
+Save administrative costs (estimated 25–40% time savings for finance teams).
+
+Bigger Industry Impact:
+
+Addresses one of the top RCM (Revenue Cycle Management) challenges in US healthcare.
+
+Enhances payer-provider transparency, which is critical under value-based care models.
+
+Potential expansion: 837P (Professional claims), 835 (Remittance), and Denial Code Analytics.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Business Problem
 
 Large contractual documents (often 100+ pages) make manual review and test-case creation time-consuming and error-prone.
