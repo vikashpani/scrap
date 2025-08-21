@@ -1,3 +1,177 @@
+"""
+Combine multiple X12 EDI .dat files into TWO XML outputs (Institutional 837I vs Professional 837P)
+using pyx12's x12n_document.
+
+Features:
+- Scans a source folder for EDI files (*.dat).
+- Auto-detects transaction set version (ICN/ICVN) from ISA/GS/ST segments.
+- Loads the correct pyx12 map folder automatically.
+- Separates Institutional (837I, e.g. 005010X223A2) and Professional (837P, e.g. 005010X222A1).
+- Writes two XML files: combined_institutional.xml and combined_professional.xml.
+
+Usage:
+------
+python combine_edi_to_xml.py \
+    --source "/path/to/source/folder" \
+    --outdir "/path/to/output/folder"
+
+Notes:
+------
+- The 2000A/2000B loops are preserved by pyx12.
+- Institutional vs Professional are split into two separate XML files.
+"""
+
+from __future__ import annotations
+import argparse
+import io
+import sys
+from pathlib import Path
+from typing import Iterable, Tuple
+import xml.etree.ElementTree as ET
+
+# --- pyx12 imports ---
+try:
+    from pyx12.params import params
+    from pyx12.x12n_document import x12n_document
+except Exception as e:
+    print("[ERROR] pyx12 not available or unexpected import error:", e, file=sys.stderr)
+    raise
+
+
+def find_edi_files(src_dir: Path, patterns: Tuple[str, ...] = ("*.dat",)) -> Iterable[Path]:
+    for pat in patterns:
+        yield from src_dir.rglob(pat)
+
+
+def detect_version_and_txset(edi_path: Path) -> Tuple[str, str, str]:
+    """
+    Detect version (ICVN), transaction set (ST01), and convention (ST03).
+    Returns (icvn, txset, implref).
+    """
+    with open(edi_path, "rt", encoding="utf-8", errors="ignore") as f:
+        content = f.read(5000)
+    segments = content.split("~")
+    icvn = ""
+    txset = ""
+    implref = ""
+    for seg in segments:
+        fields = seg.split("*")
+        if fields[0] == "GS" and len(fields) > 8:
+            icvn = fields[8]
+        elif fields[0] == "ST" and len(fields) > 2:
+            txset = fields[1]
+            implref = fields[2]
+        if icvn and txset:
+            break
+    return icvn, txset, implref
+
+
+def get_default_map_dir(icvn: str) -> Path:
+    import pyx12
+    base = Path(pyx12.__file__).resolve().parent / "maps"
+    return base / icvn[:6]
+
+
+def convert_edi_to_xml_bytes(edi_path: Path, p: "params") -> bytes:
+    buf = io.BytesIO()
+    with open(edi_path, "rb") as fp_in:
+        x12n_document(fp_in, buf, p, str(edi_path))
+    return buf.getvalue()
+
+
+def parse_xml_bytes(xml_bytes: bytes) -> ET.Element:
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError as e:
+        snippet = xml_bytes[:300].decode("utf-8", errors="replace")
+        raise RuntimeError(f"Failed to parse XML: {e}\nSnippet:\n{snippet}")
+    return root
+
+
+def build_combined_tree(doc_roots: Iterable[Tuple[Path, ET.Element]]) -> ET.ElementTree:
+    combined_root = ET.Element("CombinedX12")
+    for src_path, root in doc_roots:
+        wrapper = ET.SubElement(combined_root, "Document", attrib={"file": str(src_path)})
+        wrapper.append(root)
+    return ET.ElementTree(combined_root)
+
+
+def pretty_write(tree: ET.ElementTree, out_path: Path) -> None:
+    try:
+        ET.indent(tree, space="  ", level=0)
+    except Exception:
+        pass
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tree.write(out_path, encoding="utf-8", xml_declaration=True)
+
+
+def combine_folder(src_dir: Path, out_dir: Path, file_patterns: Tuple[str, ...] = ("*.dat",)) -> Tuple[int, int]:
+    edi_files = list(find_edi_files(src_dir, file_patterns))
+    if not edi_files:
+        raise FileNotFoundError(f"No EDI files found in {src_dir} matching {file_patterns}")
+
+    institutional_roots = []
+    professional_roots = []
+
+    for edi_path in sorted(edi_files):
+        icvn, txset, implref = detect_version_and_txset(edi_path)
+        if txset != "837":
+            continue  # skip non-837s
+
+        map_dir = get_default_map_dir(icvn)
+        p = params()
+        p.set("map_path", str(map_dir))
+        p.set("icvn", icvn)
+
+        xml_bytes = convert_edi_to_xml_bytes(edi_path, p)
+        root = parse_xml_bytes(xml_bytes)
+
+        # Classify Professional vs Institutional based on implementation reference
+        if "X222" in icvn or "X222" in implref:
+            professional_roots.append((edi_path, root))
+        elif "X223" in icvn or "X223" in implref:
+            institutional_roots.append((edi_path, root))
+        else:
+            # Default to professional if not clearly institutional
+            professional_roots.append((edi_path, root))
+
+    if institutional_roots:
+        inst_tree = build_combined_tree(institutional_roots)
+        pretty_write(inst_tree, out_dir / "combined_institutional.xml")
+    if professional_roots:
+        prof_tree = build_combined_tree(professional_roots)
+        pretty_write(prof_tree, out_dir / "combined_professional.xml")
+
+    return len(institutional_roots), len(professional_roots)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Combine multiple EDI files into two XMLs: Institutional vs Professional")
+    parser.add_argument("--source", required=True, type=Path, help="Folder containing EDI .dat files")
+    parser.add_argument("--outdir", required=True, type=Path, help="Folder to write XML outputs")
+    parser.add_argument("--glob", nargs="+", default=["*.dat"], help="Glob patterns to include (default: *.dat)")
+    args = parser.parse_args(argv)
+
+    inst_count, prof_count = combine_folder(src_dir=args.source, out_dir=args.outdir, file_patterns=tuple(args.glob))
+    print(f"Wrote {inst_count} institutional and {prof_count} professional files into {args.outdir}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
+
+
+
+
+
+
+
+
+
+
+
 import os
 import pandas as pd
 from pyx12.x12file import X12Reader
