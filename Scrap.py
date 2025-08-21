@@ -1,4 +1,145 @@
 import os
+import re
+import pandas as pd
+import xml.etree.ElementTree as ET
+from collections import defaultdict
+from datetime import datetime
+
+# -------------------
+# Config
+# -------------------
+input_xml_folder = "edi_claim_extractor_source"
+excel_file = "edi_claim_extractor_input_file.xlsx"
+output_folder = "edi_claim_outputs"
+os.makedirs(output_folder, exist_ok=True)
+
+# -------------------
+# Load Excel claims of interest
+# -------------------
+df = pd.read_excel(excel_file, dtype=str).fillna("")
+
+claims_lookup = set(
+    (str(row["Patient Control Number"]).strip(),
+     str(row["Member ID"]).strip(),
+     str(row["Total Bill Amount"]).strip(),
+     str(row["Start Date"]).strip())
+    for _, row in df.iterrows()
+)
+
+# -------------------
+# Utilities
+# -------------------
+def get_text(element, path):
+    node = element.find(path)
+    return node.text.strip() if node is not None and node.text else ""
+
+def match_claim(clm01, nm109, clm02, start_date):
+    return (clm01.strip(), nm109.strip(), clm02.strip(), start_date.strip()) in claims_lookup
+
+# -------------------
+# Process XML files
+# -------------------
+claims_by_partner = defaultdict(lambda: {"Professional": [], "Institutional": []})
+
+for file in os.listdir(input_xml_folder):
+    if not file.endswith(".xml"):
+        continue
+
+    tree = ET.parse(os.path.join(input_xml_folder, file))
+    root = tree.getroot()
+
+    # Extract trading partner from ISA06
+    isa06 = get_text(root, ".//ISA06")
+    if not isa06:
+        continue
+
+    # Determine claim type by looking at ST segment
+    st_val = get_text(root, ".//ST01")
+    if st_val == "837":
+        # Professional vs Institutional indicator
+        claim_type = "Professional" if "HC" in file else "Institutional"
+    else:
+        continue
+
+    # Get headers and footers
+    isa = root.find(".//ISA")
+    gs = root.find(".//GS")
+    st = root.find(".//ST")
+    se = root.find(".//SE")
+    ge = root.find(".//GE")
+    iea = root.find(".//IEA")
+
+    # Traverse 2000A → 2000B
+    for loop2000a in root.findall(".//2000A"):
+        a_copy = ET.Element("2000A", attrib=loop2000a.attrib)
+        added_b = False
+
+        for loop2000b in loop2000a.findall(".//2000B"):
+            clm01 = get_text(loop2000b, ".//CLM01")
+            nm109 = get_text(loop2000b, ".//NM109")
+            clm02 = get_text(loop2000b, ".//CLM02")
+
+            # DTP start date (472 for professional, 434 for institutional)
+            dtp_tag = "472" if claim_type == "Professional" else "434"
+            start_date = ""
+            for dtp in loop2000b.findall(".//DTP"):
+                if dtp_tag in (dtp.text or ""):
+                    start_date = dtp.find("DTP03").text if dtp.find("DTP03") is not None else ""
+
+            if match_claim(clm01, nm109, clm02, start_date):
+                a_copy.append(loop2000b)
+                added_b = True
+
+        if added_b:
+            claims_by_partner[isa06][claim_type].append((isa, gs, st, a_copy, se, ge, iea))
+
+# -------------------
+# Write outputs
+# -------------------
+today = datetime.now().strftime("%m%d%Y")
+
+for partner, types in claims_by_partner.items():
+    for claim_type, blocks in types.items():
+        if not blocks:
+            continue
+
+        # Build new XML root
+        new_root = ET.Element("EDI")
+        # take header/footer from first block
+        isa, gs, st, _, se, ge, iea = blocks[0]
+        new_root.append(isa)
+        new_root.append(gs)
+        new_root.append(st)
+
+        # add all unique 2000A
+        seen_a = set()
+        for _, _, _, a_block, _, _, _ in blocks:
+            a_str = ET.tostring(a_block)
+            if a_str not in seen_a:
+                seen_a.add(a_str)
+                new_root.append(a_block)
+
+        new_root.append(se)
+        new_root.append(ge)
+        new_root.append(iea)
+
+        out_file = f"{claim_type}_{partner}_{today}.DAT"
+        ET.ElementTree(new_root).write(os.path.join(output_folder, out_file), encoding="utf-8", xml_declaration=True)
+
+print(f"✅ Extraction completed. Output written to {output_folder}")
+
+
+
+
+
+
+
+
+
+
+
+
+import os
 import xml.etree.ElementTree as ET
 from io import StringIO
 from x12.core import x12n_document, ParamsBase
