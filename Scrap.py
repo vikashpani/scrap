@@ -1,4 +1,87 @@
 import os
+import pandas as pd
+from pyx12.x12file import X12Reader
+from pyx12.writer import X12Writer
+from datetime import datetime
+
+# Load claims of interest from Excel
+claims_df = pd.read_excel("edi_claim_extractor_input_file.xlsx")
+
+# Create dict for fast lookup
+claims_lookup = {
+    (str(row["PatientControlNumber"]),
+     str(row["MemberID"]),
+     str(row["TotalBillAmount"]),
+     str(row["StartDateOfService"]))
+    for _, row in claims_df.iterrows()
+}
+
+source_folder = "edi_claim_extractor_source_folder"
+output_folder = "Extracted_EDIs"
+os.makedirs(output_folder, exist_ok=True)
+
+for file in os.listdir(source_folder):
+    if not file.endswith(".edi"):
+        continue
+    
+    with open(os.path.join(source_folder, file), 'r') as f:
+        edi = X12Reader(f)
+
+        current_claim = {}
+        collected_claims = {}
+        isa_sender = None
+        st_type = None
+
+        for seg in edi:
+            seg_id = seg.get_seg_id()
+
+            if seg_id == "ISA":
+                isa_sender = seg.get_value('ISA06')
+
+            if seg_id == "ST":
+                st_type = seg.get_value('ST01')  # 837P or 837I
+
+            if seg_id == "CLM":
+                current_claim["PatientControlNumber"] = seg.get_value("CLM01")
+                current_claim["TotalBillAmount"] = seg.get_value("CLM02")
+
+            if seg_id == "NM1" and seg.get_value("NM101") == "IL":  # Subscriber
+                current_claim["MemberID"] = seg.get_value("NM109")
+
+            if seg_id == "DTP":
+                if seg.get_value("DTP01") in ["472", "434"]:  # Service dates
+                    dt_str = seg.get_value("DTP03")
+                    current_claim["StartDateOfService"] = dt_str
+
+            if seg_id == "SE":  # End of claim
+                key = (current_claim.get("PatientControlNumber"),
+                       current_claim.get("MemberID"),
+                       current_claim.get("TotalBillAmount"),
+                       current_claim.get("StartDateOfService"))
+
+                if key in claims_lookup:
+                    claim_type = "Professional" if st_type == "837P" else "Institutional"
+                    collected_claims.setdefault((claim_type, isa_sender), []).append(edi.copy_current_loop())
+
+                current_claim = {}
+
+        # Write filtered EDI files
+        for (claim_type, partner), claims in collected_claims.items():
+            out_file = f"{claim_type}_{partner}_{datetime.now().strftime('%m%d
+
+
+
+
+
+
+
+
+
+
+
+
+
+import os
 import re
 import json
 from typing import List, Dict, Any, Tuple
