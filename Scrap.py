@@ -1,3 +1,84 @@
+import os
+import xml.etree.ElementTree as ET
+from io import StringIO
+from x12.core import x12n_document, ParamsBase
+
+def change_file_into_segment_list(edi_file_path):
+    with open(edi_file_path, 'r', encoding='utf-8') as file:
+        segment_list = [line.strip() for line in file.readlines()]
+    return segment_list
+
+def load_edi_segments_as_xml_obj(edi_segments_list):
+    edibuffer = StringIO('\n'.join(edi_segments_list))
+    param = ParamsBase()
+    xmlbuffer = StringIO()
+    x12n_document(param, edibuffer, fd_997=None, fd_html=None, fd_xmldoc=xmlbuffer, map_path=None)
+    xmlbuffer.seek(0)
+    rootnode = ET.fromstring(xmlbuffer.getvalue())
+    return rootnode
+
+def identify_edi_type(segments):
+    """
+    Returns 'I' for Institutional, 'P' for Professional, or None if unsupported (like Dental).
+    """
+    for seg in segments:
+        if seg.startswith("ST*837"):
+            if "005010X223" in seg:  # Institutional
+                return "I"
+            elif "005010X222" in seg:  # Professional
+                return "P"
+            elif "005010X224" in seg:  # Dental (skip)
+                return None
+    return None
+
+def build_combined_xml(input_folder, output_folder):
+    institutional_root = ET.Element("Institutional837")
+    professional_root = ET.Element("Professional837")
+
+    for filename in os.listdir(input_folder):
+        if not filename.endswith(".txt") and not filename.endswith(".edi"):
+            continue
+
+        file_path = os.path.join(input_folder, filename)
+        segments = change_file_into_segment_list(file_path)
+        edi_type = identify_edi_type(segments)
+
+        if edi_type is None:  # Skip dental or unknown
+            continue
+
+        rootnode = load_edi_segments_as_xml_obj(segments)
+
+        if edi_type == "I":
+            institutional_root.append(rootnode)
+        elif edi_type == "P":
+            professional_root.append(rootnode)
+
+    # Write Institutional
+    if len(institutional_root):
+        inst_tree = ET.ElementTree(institutional_root)
+        inst_tree.write(os.path.join(output_folder, "837I_combined.xml"), encoding="utf-8", xml_declaration=True)
+
+    # Write Professional
+    if len(professional_root):
+        prof_tree = ET.ElementTree(professional_root)
+        prof_tree.write(os.path.join(output_folder, "837P_combined.xml"), encoding="utf-8", xml_declaration=True)
+
+    print("✅ Combined XMLs generated successfully.")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 """
 Combine multiple X12 EDI .dat files into TWO XML outputs (Institutional 837I vs Professional 837P)
 using pyx12's x12n_document.
