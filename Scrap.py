@@ -1,3 +1,466 @@
+
+#!/usr/bin/env python3
+"""
+Extract matched claims from large 837I/837P XMLs and build EDI .DAT files grouped by claim type + ISA06 (trading partner).
+
+- Deduplicates identical ISA_LOOP (full ISA->IEA interchange).
+- Matches claims using Excel lookup: (CLM01, NM109, CLM02, StartDate).
+- Groups matched claims by (ClaimType, ISA06) and by subscriber (2000A).
+- Writes proper EDI .DAT files reusing original ISA/GS/ST/.../SE/GE/IEA segments.
+
+CONFIG: set INPUT_XML_FOLDER, EXCEL_FILE, OUTPUT_FOLDER
+"""
+import os
+import hashlib
+import xml.etree.ElementTree as ET
+from collections import defaultdict
+from datetime import datetime
+import pandas as pd
+
+# -----------------------
+# CONFIG - change these
+# -----------------------
+INPUT_XML_FOLDER = "edi_claim_extractor_source"   # folder with 837I/837P XMLs
+EXCEL_FILE = "edi_claim_extractor_input_file.xlsx"
+OUTPUT_FOLDER = "edi_claim_outputs"
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+# Excel column names tolerance (try to auto-detect common variations)
+EXCEL_CANDIDATES = {
+    "clm01": ["Patient Control Number", "CLM01", "patient_control_number", "patient_control_no"],
+    "member": ["Member ID", "NM109", "MemberID", "member_id"],
+    "amount": ["Total Bill Amount", "CLM02", "TotalAmount", "total_amount"],
+    "startdate": ["Start Date", "Start Date of Service", "StartDate", "start_date"]
+}
+
+
+# -----------------------
+# Helpers
+# -----------------------
+def pick_excel_columns(df):
+    """Return column names for clm01, member, amount, startdate by checking candidate headers."""
+    cols = {k: None for k in EXCEL_CANDIDATES}
+    lower_map = {c.lower().strip(): c for c in df.columns}
+    for key, candidates in EXCEL_CANDIDATES.items():
+        for cand in candidates:
+            if cand in df.columns:
+                cols[key] = cand
+                break
+            if cand.lower() in lower_map:
+                cols[key] = lower_map[cand.lower()]
+                break
+    # If any missing, try fuzzy fallback: find columns containing substrings
+    for key, val in cols.items():
+        if val is None:
+            for col in df.columns:
+                lc = col.lower()
+                if key == "clm01" and ("clm" in lc and "01" in lc or "control" in lc):
+                    cols[key] = col; break
+                if key == "member" and ("member" in lc or "nm1" in lc):
+                    cols[key] = col; break
+                if key == "amount" and ("amount" in lc or "clm02" in lc or "total" in lc):
+                    cols[key] = col; break
+                if key == "startdate" and ("date" in lc):
+                    cols[key] = col; break
+    return cols
+
+
+def normalize_date_str(s: str) -> str:
+    """Return digits-only normalized date for comparisons (e.g., 20250103 or 01032025 etc)."""
+    if s is None:
+        return ""
+    s = str(s).strip()
+    if not s:
+        return ""
+    # remove non-digits
+    digits = "".join(ch for ch in s if ch.isdigit())
+    return digits
+
+
+def normalize_value(s: str) -> str:
+    if s is None:
+        return ""
+    return str(s).strip()
+
+
+def fingerprint_element(elem: ET.Element) -> str:
+    """Fingerprint an element (and its child seg/ele structure) deterministically."""
+    parts = []
+    for node in elem.iter():
+        if node.tag == 'seg':
+            segid = node.attrib.get('id', '')
+            ele_texts = []
+            for ele in node.findall('ele'):
+                ele_texts.append((ele.text or '').strip())
+            parts.append(segid + "|" + "|".join(ele_texts))
+    joined = "||".join(parts)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+
+def seg_to_edi_text(seg: ET.Element) -> str:
+    """Convert <seg id='ISA'> <ele id='ISA01'>..</ele> ... </seg> -> 'ISA*ele1*ele2*...~'"""
+    if seg is None:
+        return ""
+    segid = seg.attrib.get('id', '').strip()
+    # preserve element order
+    ele_texts = []
+    for ele in seg.findall('ele'):
+        # keep empty elements as empty strings to preserve field positions
+        ele_texts.append((ele.text or '').strip())
+    if ele_texts:
+        return segid + "*" + "*".join(ele_texts) + "~"
+    else:
+        return segid + "~"
+
+
+def get_seg_ele(scope: ET.Element, seg_id: str, ele_id: str) -> str:
+    """Find first <seg id='seg_id'>/<ele id='ele_id'> descendant under scope and return text."""
+    node = scope.find(f".//seg[@id='{seg_id}']/ele[@id='{ele_id}']")
+    return (node.text or "").strip() if node is not None and node.text else ""
+
+
+def find_all_isa_loops(root: ET.Element):
+    """Return list of ISA_LOOP elements. Try common XPaths/fallbacks."""
+    loops = root.findall(".//loop[@id='ISA_LOOP']")
+    if loops:
+        return loops
+    # try just seg grouping
+    return root.findall(".//seg[@id='ISA']/..")  # parent of ISA seg (likely a loop element)
+
+
+def get_isa06_from_isa_loop(isa_loop: ET.Element) -> str:
+    return get_seg_ele(isa_loop, "ISA", "ISA06")
+
+
+def get_gs08_from_isa_loop(isa_loop: ET.Element) -> str:
+    return get_seg_ele(isa_loop, "GS", "GS08")
+
+
+def get_st_implref_from_st(st_seg: ET.Element) -> str:
+    # ST3 (implementation reference) sometimes stored as ST03
+    if st_seg is None:
+        return ""
+    node = st_seg.find("ele[@id='ST03']")
+    if node is not None and (node.text or "").strip():
+        return (node.text or "").strip()
+    return ""
+
+
+def get_dtp_start_date(loop2000b: ET.Element, target_tag: str) -> str:
+    """Return DTP03 where DTP01 matches target_tag (e.g., '472' or '434')."""
+    for dtp in loop2000b.findall(".//seg[@id='DTP']"):
+        dtp01 = dtp.find("ele[@id='DTP01']")
+        if dtp01 is not None and (dtp01.text or "").strip() == target_tag:
+            dtp03 = dtp.find("ele[@id='DTP03']")
+            return (dtp03.text or "").strip() if dtp03 is not None and dtp03.text else ""
+    return ""
+
+
+# -----------------------
+# Load Excel lookup
+# -----------------------
+print("Loading Excel file:", EXCEL_FILE)
+df = pd.read_excel(EXCEL_FILE, dtype=str).fillna("")
+cols_map = pick_excel_columns(df)
+if not cols_map['clm01'] or not cols_map['member'] or not cols_map['amount']:
+    raise SystemExit("ERROR: Could not auto-detect necessary Excel columns. Please ensure Excel has Patient Control Number, Member ID, Total Bill Amount columns.")
+
+excel_keys = set()
+for _, row in df.iterrows():
+    clm01 = normalize_value(row[cols_map['clm01']])
+    nm109 = normalize_value(row[cols_map['member']])
+    clm02 = normalize_value(row[cols_map['amount']])
+    # start date may be optional in Excel; if present normalize
+    sdate = normalize_date_str(row[cols_map['startdate']]) if cols_map['startdate'] else ""
+    excel_keys.add((clm01, nm109, clm02, sdate))
+print(f"Excel entries loaded: {len(excel_keys)}")
+
+# -----------------------
+# Process XML files: dedupe ISA_LOOP, match claims
+# -----------------------
+seen_isa_hashes = set()
+# structure: claims_by_partner[(claim_type, isa06)] -> { subscriber_fp: (subscriber_2000a_elem, set_of_2000b_elems) }
+claims_by_partner = defaultdict(lambda: defaultdict(lambda: {"2000a": None, "2000b_set": [], "seen_b_fp": set()}))
+
+xml_files = [f for f in os.listdir(INPUT_XML_FOLDER) if f.lower().endswith(".xml")]
+print("Found XML files:", xml_files)
+
+for xmlf in xml_files:
+    path = os.path.join(INPUT_XML_FOLDER, xmlf)
+    print("Parsing:", path)
+    tree = ET.parse(path)
+    root = tree.getroot()
+
+    isa_loops = find_all_isa_loops(root)
+    if not isa_loops:
+        print("  No ISA_LOOP found in", xmlf)
+        continue
+
+    for isa_loop in isa_loops:
+        isa_fp = fingerprint_element(isa_loop)
+        if isa_fp in seen_isa_hashes:
+            # skip identical full interchange
+            # print("Skipping duplicate ISA_LOOP fingerprint:", isa_fp[:8])
+            continue
+        seen_isa_hashes.add(isa_fp)
+
+        isa06 = get_isa06_from_isa_loop(isa_loop)
+        if not isa06:
+            # cannot group without trading partner; skip
+            # print("  No ISA06; skipping interchange")
+            continue
+
+        # find header/footer segs
+        isa_seg = isa_loop.find(".//seg[@id='ISA']")
+        iea_seg = isa_loop.find(".//seg[@id='IEA']")
+
+        # find GS groups
+        gs_loops = isa_loop.findall(".//loop[@id='GS_LOOP']")
+        if not gs_loops:
+            # fallback: try to build from GS segments under this ISA
+            gs_segs = isa_loop.findall(".//seg[@id='GS']")
+            for seg in gs_segs:
+                l = ET.Element("loop", attrib={"id": "GS_LOOP"})
+                l.append(seg)
+                # try to attach GE if present under ISA
+                ge = isa_loop.find(".//seg[@id='GE']")
+                if ge is not None:
+                    l.append(ge)
+                gs_loops.append(l)
+
+        for gs_loop in gs_loops:
+            gs_seg = gs_loop.find(".//seg[@id='GS']")
+            ge_seg = gs_loop.find(".//seg[@id='GE']")
+
+            # find ST loops under this GS
+            st_loops = gs_loop.findall(".//loop[@id='ST_LOOP']")
+            if not st_loops:
+                st_segs = gs_loop.findall(".//seg[@id='ST']")
+                for sseg in st_segs:
+                    st_loop = ET.Element("loop", attrib={"id": "ST_LOOP"})
+                    st_loop.append(sseg)
+                    # attach matching SE if exists
+                    se_candidate = gs_loop.find(".//seg[@id='SE']")
+                    if se_candidate is not None:
+                        st_loop.append(se_candidate)
+                    st_loops.append(st_loop)
+
+            for st_loop in st_loops:
+                st_seg = st_loop.find(".//seg[@id='ST']")
+                se_seg = st_loop.find(".//seg[@id='SE']")
+                if st_seg is None:
+                    continue
+
+                # determine claim type: prefer GS08 then ST03
+                gs08 = (gs_seg.find("ele[@id='GS08']").text or "").strip() if gs_seg is not None and gs_seg.find("ele[@id='GS08']") is not None else ""
+                st_impl = get_st_implref_from_st(st_seg)
+                claim_type = None
+                if "X222" in gs08 or "005010X222" in gs08 or "X222" in st_impl or "005010X222" in st_impl:
+                    claim_type = "Professional"
+                elif "X223" in gs08 or "005010X223" in gs08 or "X223" in st_impl or "005010X223" in st_impl:
+                    claim_type = "Institutional"
+                else:
+                    # fallback: if filename contains 'p' or 'i'
+                    if "p" in xmlf.lower():
+                        claim_type = "Professional"
+                    elif "i" in xmlf.lower():
+                        claim_type = "Institutional"
+                    else:
+                        # unknown, skip
+                        continue
+
+                # iterate 2000A loops inside this ST
+                for loop2000a in st_loop.findall(".//loop[@id='2000A']"):
+                    # fingerprint subscriber-level 2000A (to dedupe later)
+                    a_fp = fingerprint_element(loop2000a)
+
+                    # we'll collect any matched 2000B under this 2000A
+                    matched_b_list = []
+
+                    for loop2000b in loop2000a.findall(".//loop[@id='2000B']"):
+                        # extract CLM01, NM109, CLM02
+                        clm01 = get_seg_ele(loop2000b, "CLM", "CLM01")
+                        nm109 = get_seg_ele(loop2000b, "NM1", "NM109")
+                        if not nm109:
+                            # sometimes member id is stored under different ele id; try known variants
+                            nm109 = get_seg_ele(loop2000b, "NM1", "NM1_09") or get_seg_ele(loop2000b, "NM1", "NM1_08")
+                        clm02 = get_seg_ele(loop2000b, "CLM", "CLM02")
+
+                        # get start dates for both tags
+                        dtp472 = get_dtp_start_date(loop2000b, "472")  # professional
+                        dtp434 = get_dtp_start_date(loop2000b, "434")  # institutional
+
+                        # normalize strings for matching
+                        n_clm01 = normalize_value(clm01)
+                        n_nm109 = normalize_value(nm109)
+                        n_clm02 = normalize_value(clm02)
+                        n_dtp472 = normalize_date_str(dtp472)
+                        n_dtp434 = normalize_date_str(dtp434)
+
+                        # Match rules:
+                        # - if ST type is Professional try match using dtp472; else dtp434
+                        matched_as = None
+                        if claim_type == "Professional" and n_dtp472:
+                            if (n_clm01, n_nm109, n_clm02, n_dtp472) in excel_keys:
+                                matched_as = "Professional"
+                        elif claim_type == "Institutional" and n_dtp434:
+                            if (n_clm01, n_nm109, n_clm02, n_dtp434) in excel_keys:
+                                matched_as = "Institutional"
+                        # fallback: try matching ignoring dtp if Excel startdate empty or not provided
+                        if not matched_as:
+                            # try match where Excel maybe has empty start date
+                            if (n_clm01, n_nm109, n_clm02, "") in excel_keys:
+                                matched_as = claim_type
+
+                        if matched_as:
+                            # we will keep this 2000B
+                            matched_b_list.append(loop2000b)
+
+                    # if we found any matched 2000B under this 2000A, record them grouped by (claim_type, isa06)
+                    if matched_b_list:
+                        key = (claim_type, isa06)
+                        # ensure this subscriber (by a_fp) is recorded
+                        entry = claims_by_partner[key][a_fp]
+                        if entry["2000a"] is None:
+                            # store a shallow copy of the 2000A loop without inner 2000B children (we will append matched ones)
+                            # Create new element and copy seg children except nested 2000B loops
+                            a_copy = ET.Element("loop", attrib={"id": "2000A"})
+                            for seg in loop2000a:
+                                # if seg is a loop 2000B skip; if seg is seg element, append
+                                if seg.tag == "loop" and seg.attrib.get("id","").startswith("2000B"):
+                                    continue
+                                a_copy.append(seg)
+                            entry["2000a"] = a_copy
+                        # For each matched 2000B, append if not duplicate
+                        for b in matched_b_list:
+                            b_fp = fingerprint_element(b)
+                            if b_fp not in entry["seen_b_fp"]:
+                                entry["seen_b_fp"].add(b_fp)
+                                # append a deep copy of b (to avoid references)
+                                entry["2000b_set"].append(b)
+
+# -----------------------
+# Build and write .DAT files
+# -----------------------
+def write_dat_files(claims_by_partner_map, out_dir):
+    today = datetime.now().strftime("%m%d%Y")
+    for (claim_type, isa06), subs_dict in claims_by_partner_map.items():
+        # collect all non-empty subscribers
+        subs = [v for v in subs_dict.values() if v["2000b_set"]]
+        if not subs:
+            continue
+
+        # Use header/footer from first matched subscriber's stored tuple? We stored only 2000a/2000b; need header from original scanning
+        # But in our earlier collection we didn't keep isa/gs/st/se/ge/iea per key to avoid repetition.
+        # For this script we will find the first occurrence in XML files again to get header/footer segments.
+        # Simpler: reconstruct header/footer from any matched 2000b's ancestor segs.
+
+        # For header reuse, extract the ISA/GS/ST/SE/GE/IEA segments from the original 2000a/2000b elements' ancestors.
+        # We'll find ancestor segs by searching upwards — but ElementTree does not have parent.
+        # Instead, to keep it simple and robust: search the entire XML folder again for the first ISA_LOOP that contains any of these 2000B fingerprints and reuse its headers.
+        header_isa_seg = None
+        header_gs_seg = None
+        header_st_seg = None
+        footer_se_seg = None
+        footer_ge_seg = None
+        footer_iea_seg = None
+
+        # find one original location for header/footer (search input XMLs)
+        found_header = False
+        # Build set of b fingerprints for search
+        all_b_fps = set()
+        for sub in subs:
+            for b in sub["2000b_set"]:
+                all_b_fps.add(fingerprint_element(b))
+
+        # search xml files to find a matching containership
+        for xmlf in xml_files:
+            path = os.path.join(INPUT_XML_FOLDER, xmlf)
+            tree = ET.parse(path)
+            root = tree.getroot()
+            isa_loops = find_all_isa_loops(root)
+            for isa_loop in isa_loops:
+                isa_loop_fps_b = set()
+                for loop2000b in isa_loop.findall(".//loop[@id='2000B']"):
+                    isa_loop_fps_b.add(fingerprint_element(loop2000b))
+                if all_b_fps & isa_loop_fps_b:
+                    # use header/footer from this isa_loop
+                    header_isa_seg = isa_loop.find(".//seg[@id='ISA']")
+                    header_gs_seg = isa_loop.find(".//seg[@id='GS']")
+                    header_st_seg = isa_loop.find(".//seg[@id='ST']")
+                    footer_se_seg = isa_loop.find(".//seg[@id='SE']")
+                    footer_ge_seg = isa_loop.find(".//seg[@id='GE']")
+                    footer_iea_seg = isa_loop.find(".//seg[@id='IEA']")
+                    found_header = True
+                    break
+            if found_header:
+                break
+
+        # fallback: if not found, skip writing (shouldn't happen)
+        if not found_header:
+            print("Warning: could not locate header/footer for", claim_type, isa06)
+            continue
+
+        # Build EDI lines: ISA, GS, ST, optional HEADER segs, then 2000A blocks with their included 2000B children, then SE, GE, IEA
+        lines = []
+        lines.append(seg_to_edi_text(header_isa_seg))
+        lines.append(seg_to_edi_text(header_gs_seg))
+        lines.append(seg_to_edi_text(header_st_seg))
+        # optional: if any 'HEADER' seg exists under header_st_seg's context, include - try find under st siblings
+        header_seg = None
+        # search for 'HEADER' seg near ST (under same ST_LOOP)
+        # Try: find seg id HEADER under the root (first instance)
+        header_seg_generic = None
+        for xmlf in xml_files:
+            path = os.path.join(INPUT_XML_FOLDER, xmlf)
+            tree = ET.parse(path)
+            root = tree.getroot()
+            h = root.find(".//seg[@id='HEADER']")
+            if h is not None:
+                header_seg_generic = h
+                break
+        if header_seg_generic is not None:
+            lines.append(seg_to_edi_text(header_seg_generic))
+
+        # append unique 2000A blocks with their matched 2000B children
+        for sub in subs:
+            a_elem = sub["2000a"]
+            if a_elem is None:
+                continue
+            # append segs inside a_elem (non-loop segs)
+            for seg in a_elem.findall(".//seg"):
+                lines.append(seg_to_edi_text(seg))
+            # append each matched 2000B under this subscriber
+            for b in sub["2000b_set"]:
+                # b may be a <loop id='2000B'> containing many seg children
+                for seg in b.findall(".//seg"):
+                    lines.append(seg_to_edi_text(seg))
+
+        # append trailers
+        if footer_se_seg is not None:
+            lines.append(seg_to_edi_text(footer_se_seg))
+        if footer_ge_seg is not None:
+            lines.append(seg_to_edi_text(footer_ge_seg))
+        if footer_iea_seg is not None:
+            lines.append(seg_to_edi_text(footer_iea_seg))
+
+        # write file
+        fname = f"{claim_type}_{isa06}_{today}.DAT"
+        outpath = os.path.join(out_dir, fname)
+        with open(outpath, "w", encoding="utf-8") as w:
+            # join with newline for human readability; EDI segment terminator `~` is already included
+            w.write("\n".join(lines))
+        print(f"Wrote {len(subs)} subscribers -> {outpath}")
+
+write_dat_files(claims_by_partner, OUTPUT_FOLDER)
+print("Completed. Outputs in:", OUTPUT_FOLDER)
+
+
+
+
+
+
+
 import os
 import re
 import pandas as pd
