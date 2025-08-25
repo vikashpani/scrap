@@ -1,3 +1,39 @@
+def parse_segment(seg: ET.Element) -> str:
+    seg_id = seg.attrib["id"]
+    elements = [seg_id]
+
+    # dictionary to hold element values with proper position
+    element_dict = {}
+
+    for child in seg:
+        if child.tag == "ele":
+            # extract numeric part (position index)
+            idx_str = child.attrib["id"].replace(seg_id, "")
+            if idx_str.isdigit():
+                idx = int(idx_str)
+                element_dict[idx] = child.text or ""
+        elif child.tag == "comp":
+            idx_str = child.attrib["id"].replace(seg_id, "")
+            if idx_str.isdigit():
+                idx = int(idx_str)
+                sub_values = [sub.text or "" for sub in child if sub.tag == "subele"]
+                element_dict[idx] = ":".join(sub_values)
+
+    # Build elements in proper order, filling missing with ""
+    max_idx = max(element_dict.keys(), default=0)
+    for i in range(1, max_idx + 1):
+        elements.append(element_dict.get(i, ""))
+
+    return "*".join(elements) + "~"
+
+
+
+
+
+
+
+
+
 import xml.etree.ElementTree as ET
 
 def parse_segment(seg: ET.Element) -> str:
