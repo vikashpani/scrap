@@ -1,3 +1,40 @@
+import xml.etree.ElementTree as ET
+
+def parse_segment(seg: ET.Element) -> str:
+    seg_id = seg.attrib["id"]
+
+    # dictionary for elements by position
+    positions = {}
+
+    for child in seg:
+        if child.tag == "ele":
+            idx = int(child.attrib["id"].replace(seg_id, ""))  # e.g. CLM02 → 2
+            positions[idx] = child.text or ""
+        elif child.tag == "comp":
+            idx = int(child.attrib["id"].replace(seg_id, ""))  # e.g. CLM05 → 5
+            sub_values = [sub.text or "" for sub in child if sub.tag == "subele"]
+            positions[idx] = ":".join(sub_values)
+
+    # fill gaps with empty "" so *** appear
+    max_idx = max(positions.keys())
+    elements = [seg_id] + [positions.get(i, "") for i in range(1, max_idx + 1)]
+
+    return "*".join(elements) + "~"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 #!/usr/bin/env python3
 """
