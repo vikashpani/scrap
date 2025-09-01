@@ -1,4 +1,44 @@
 prompt = f"""
+You are given part of an EDI implementation guideline (example: ISA segment fields 01–16).
+
+Your task: Extract *all* validation rules for every field in every segment.
+
+Output format: A JSON array of objects. No markdown, no comments, no explanations.
+
+Each object must contain exactly these keys:
+- "Segment Name": string
+- "Field Position": integer (1–N, no leading zeros, numeric only)
+- "Usage": one of ["Required","Situational","Not Used"]
+- "Short Description": string
+- "Accepted Codes": list of {{"code": string, "description": string}} (empty list if none)
+
+STRICT INSTRUCTIONS:
+1. If the segment has 16 fields, you must return **all 16 entries** (Field Position 1 through 16). Never skip a field, even if it has no accepted codes.
+2. Do not merge different fields. Each field must have its own entry.
+3. Capture every accepted code that appears, from tables, inline text, bullets, or parentheses. Do not drop or shorten them. If description is not available, use "" (empty string).
+4. Field Position must always increase sequentially (1, 2, 3…) without missing numbers.
+5. Usage must exactly match the guideline text (e.g., "Required" if marked as M, "Situational" if marked as S, "Not Used" if marked as X).
+6. Short Description should be the full label or definition (not abbreviated unless that is exactly how it appears).
+7. Accepted Codes list must contain all codes for that field, no duplicates, and with full descriptions.
+
+Validation before output:
+- Ensure Segment Name + Field Position combination is unique.
+- Ensure numeric field positions are sequential (no skips).
+- Ensure Accepted Codes are captured completely.
+
+Return only the JSON array.
+
+Text:
+{chunk.page_content}
+"""
+
+
+
+
+
+
+
+prompt = f"""
 You are given part of an EDI implementation guideline.
 
 Goal: Extract validation rules for segments and fields with NO duplicates and NO missing accepted codes.
