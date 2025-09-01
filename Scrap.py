@@ -1,3 +1,41 @@
+import re
+
+def parse_segments(text):
+    segments = []
+    # Split on segment terminator (~) or newline if PDF extracted
+    raw_segments = re.split(r'~|\n', text)
+    
+    for raw in raw_segments:
+        raw = raw.strip()
+        if not raw:
+            continue
+        # Segment name = first 2-3 chars
+        match = re.match(r'^([A-Z0-9]{2,3})(.*)', raw)
+        if not match:
+            continue
+        seg_name, rest = match.groups()
+        elements = rest.strip().split('*')[1:] if '*' in rest else []
+        
+        seg_dict = {
+            "segment": seg_name,
+            "elements": [
+                {
+                    "position": str(i+1).zfill(2),
+                    "text": elem.strip(),
+                    "usage": "",
+                    "short_description": "",
+                    "accepted_codes": []
+                }
+                for i, elem in enumerate(elements)
+            ]
+        }
+        segments.append(seg_dict)
+    return segments
+
+
+
+
+
 def parse_segments(docs):
     """
     Input: docs (list of LangChain Document objects with .page_content)
