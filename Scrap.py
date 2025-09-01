@@ -1,3 +1,51 @@
+prompt = f"""
+You are given part of an EDI implementation guideline.
+
+Goal: Extract validation rules for segments and fields with NO duplicates and NO missing accepted codes.
+
+Output: Return ONLY a JSON array of objects. No markdown, no comments, no extra text.
+
+For each rule include exactly these keys:
+- "Segment Name": string
+- "Field Position": integer (numeric only)
+- "Usage": one of ["Required","Situational","Not Used"]
+- "Short Description": string
+- "Accepted Codes": list of {{"code": string, "description": string}} (empty list if none specified)
+
+STRICT PROCESS (follow exactly; do not output these steps):
+1) SILENTLY build a dictionary keyed by K = "<Segment Name>|<Field Position>" while reading the text.
+2) When you see the same K again, MERGE into the existing entry instead of creating a new one:
+   - Short Description: keep the longest/most informative version.
+   - Usage: if conflicting, choose the strictest (Required > Situational > Not Used).
+   - Accepted Codes: UNION of all codes found for K (no duplicates).
+3) EXHAUSTIVE CODE CAPTURE:
+   - Capture codes from any phrasing like "Accepted Codes", "Valid Values", "Values", "must be one of", "qualifier values", "(code – description)", tables, bullets, comma-separated lists, or text in parentheses after the field name.
+   - Include codes even if descriptions are missing (use empty string for description).
+   - Normalize codes by trimming spaces; keep original case as shown (usually uppercase).
+4) ONLY AFTER finishing the entire text, convert the dictionary values to a JSON list.
+5) Sort final list by "Segment Name" (A→Z) then by "Field Position" (ascending).
+6) Ensure there is exactly ONE object per unique ("Segment Name","Field Position").
+
+Validation before output:
+- No duplicate ("Segment Name","Field Position") pairs.
+- "Field Position" is an integer.
+- "Accepted Codes" lists contain unique codes only.
+
+Text:
+{chunk.page_content}
+"""
+
+
+
+
+
+
+
+
+
+
+
+
 def parse_segment(seg: ET.Element) -> str:
     seg_id = seg.attrib["id"]
     elements = [seg_id]
