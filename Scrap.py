@@ -1,3 +1,57 @@
+def parse_segments(docs):
+    """
+    Input: docs (list of LangChain Document objects with .page_content)
+    Output: structured segments dict for LLM
+    """
+    segments = []
+
+    for doc in docs:
+        text = doc.page_content
+
+        # Split into lines for processing
+        lines = [line.strip() for line in text.split("\n") if line.strip()]
+
+        current_segment = None
+        current_fields = []
+
+        for line in lines:
+            # If line looks like start of a new segment (e.g., ISA, GS, ST, SE, etc.)
+            if len(line) >= 2 and line[:2].isalpha() and line[:2].isupper():
+                # save previous segment if exists
+                if current_segment:
+                    segments.append({
+                        "segment": current_segment,
+                        "fields": current_fields
+                    })
+                # start new segment
+                parts = line.split()
+                current_segment = parts[0]  # e.g., ISA
+                current_fields = [{"field_position": "01", "text": " ".join(parts[1:])}]
+            
+            else:
+                # looks like continuation or element description
+                if current_fields:
+                    field_pos = str(len(current_fields) + 1).zfill(2)
+                    current_fields.append({
+                        "field_position": field_pos,
+                        "text": line
+                    })
+
+        # last segment flush
+        if current_segment:
+            segments.append({
+                "segment": current_segment,
+                "fields": current_fields
+            })
+
+    return segments
+
+
+
+
+
+
+
 import json
 from collections import defaultdict
 from openai import OpenAI
