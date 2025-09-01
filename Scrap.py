@@ -1,3 +1,105 @@
+import json
+from collections import defaultdict
+from openai import OpenAI
+
+client = OpenAI()
+
+def build_segment_dicts(elements):
+    """
+    Convert element-level docs into segment-wise dictionary
+    """
+    segments = defaultdict(list)
+    for elem in elements:
+        element_name = elem["Element"]  # e.g., ISA01
+        segment = element_name[:3]      # ISA
+        field_position = element_name[3:]  # 01
+        text = elem["text"]
+
+        segments[segment].append({
+            "field_position": field_position,
+            "text": text
+        })
+    return segments
+
+
+def query_llm_for_segment(segment_name, fields):
+    """
+    Send one segment (with all its fields) to the LLM
+    and get enriched rules back.
+    """
+    prompt = f"""
+    You are analyzing an EDI X12 segment called {segment_name}.
+    Each field has a position and some extracted text.
+    For each field, return:
+    - field_position
+    - usage (required/optional/conditional if identifiable)
+    - short_description
+    - accepted_codes with description (if applicable)
+
+    Input fields:
+    {json.dumps(fields, indent=2)}
+
+    Return JSON only, structured like:
+    {{
+      "segment": "{segment_name}",
+      "fields": [
+        {{
+          "field_position": "01",
+          "usage": "Required",
+          "short_description": "Authorization Information Qualifier",
+          "accepted_codes": {{"00": "No Authorization", "01": "Authorization Present"}}
+        }}
+      ]
+    }}
+    """
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0
+    )
+
+    return json.loads(response.choices[0].message.content)
+
+
+def build_rules(elements):
+    """
+    Main pipeline: process all elements → segment dict → query LLM → merge into rules.json
+    """
+    segments = build_segment_dicts(elements)
+    rules = {"segments": []}
+
+    for segment_name, fields in segments.items():
+        enriched = query_llm_for_segment(segment_name, fields)
+        rules["segments"].append(enriched)
+
+    return rules
+
+
+# Example usage
+elements = [
+    {"Element": "ISA01", "text": "Authorization Information Qualifier"},
+    {"Element": "ISA02", "text": "Authorization Information"},
+    {"Element": "ISA03", "text": "Security Information Qualifier"},
+    {"Element": "ISA04", "text": "Security Information"},
+    {"Element": "GS01", "text": "Functional Identifier Code"},
+    {"Element": "GS02", "text": "Application Sender’s Code"}
+]
+
+rules_json = build_rules(elements)
+
+with open("rules.json", "w") as f:
+    json.dump(rules_json, f, indent=2)
+
+
+
+
+
+
+
+
+
+
 import re
 
 def element_based_chunking(text: str):
