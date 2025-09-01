@@ -1,3 +1,58 @@
+import re
+
+def element_based_chunking(text: str):
+    """
+    Splits EDI implementation guide text into chunks per element (ISA01, ISA02...).
+    """
+    # Pattern: Usage + ISAxx
+    element_pattern = re.compile(r"\b(REQUIRED|SITUATIONAL|NOT USED)\s+(ISA\d{2})", re.IGNORECASE)
+
+    chunks = []
+    current_chunk = []
+    current_element = None
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        match = element_pattern.search(line)
+        if match:
+            # save previous element chunk
+            if current_chunk and current_element:
+                chunks.append({
+                    "Element": current_element,
+                    "Text": " ".join(current_chunk).strip()
+                })
+                current_chunk = []
+
+            # start new element
+            current_element = match.group(2)
+            current_chunk.append(line)
+        else:
+            # continuation line
+            if current_element:
+                current_chunk.append(line)
+
+    # save last
+    if current_chunk and current_element:
+        chunks.append({
+            "Element": current_element,
+            "Text": " ".join(current_chunk).strip()
+        })
+
+    return chunks
+
+
+
+
+
+
+
+
+
+
+
 prompt = f"""
 You are given part of an EDI implementation guideline (example: ISA segment fields 01–16).
 
