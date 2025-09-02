@@ -1,3 +1,151 @@
+def build_rules(elements, llm):
+    """
+    Main pipeline: process all elements → build segment dicts → query LLM → merge into rules.json
+    """
+    segments = build_segment_dicts(elements)
+    rules = {"segments": []}
+
+    for segment_name, fields in segments.items():
+        enriched = query_llm_for_segment(segment_name, fields, llm)
+        rules["segments"].append(json.loads(enriched))
+
+    return rules
+
+from collections import defaultdict
+
+def build_segment_dicts(elements: list) -> dict:
+    """
+    Convert element-level docs into segment-wise dictionary.
+    Handles subfields like SVC01-1.
+    """
+    segments = defaultdict(list)
+
+    for elem in elements:
+        element_name = elem["Element"]  # e.g., "ISA01", "SVC01-1"
+        
+        if "-" in element_name:
+            # subfield (composite)
+            segment = element_name[:3]   # e.g., SVC
+            field_position = element_name
+        elif len(element_name) == 5:
+            segment = element_name[:3]   # e.g., ISA
+            field_position = element_name[3:]
+        else:
+            segment = element_name[:2]   # e.g., GS
+            field_position = element_name[2:]
+
+        text = elem["Text"]
+
+        segments[segment].append({
+            "field_position": field_position,
+            "text": text
+        })
+
+    return segments
+
+
+import re
+
+def element_based_chunking(text: str):
+    """
+    Splits EDI implementation guide text into chunks per element (ISA01, REF01, SVC01-1, etc.)
+    """
+    element_pattern = re.compile(r"\b(REQUIRED|SITUATIONAL|NOT USED)\s+([A-Z]{2,3}\d{2}(?:-\d{1,2})?)", re.IGNORECASE)
+    
+    chunks = []
+    current_chunk = []
+    current_element = None
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        match = element_pattern.search(line)
+        if match:
+            # save previous element chunk
+            if current_chunk and current_element:
+                chunks.append({
+                    "Element": current_element,
+                    "Text": " ".join(current_chunk).strip()
+                })
+            # start new element
+            current_element = match.group(2)
+            current_chunk = [line]
+        else:
+            # continuation line
+            if current_element:
+                current_chunk.append(line)
+
+    # save last element
+    if current_chunk and current_element:
+        chunks.append({
+            "Element": current_element,
+            "Text": " ".join(current_chunk).strip()
+        })
+
+    return chunks
+
+
+def query_llm_for_segment(segment_name: str, fields: list, llm) -> dict:
+    """
+    Send one segment (with all its fields, including composites) to the LLM 
+    and get enriched rules back.
+    """
+    prompt = f"""
+You are analyzing an EDI X12 segment called {segment_name}.
+
+Each field has a position and some extracted text.
+Some fields are composites (e.g., SVC01) and may contain subfields (e.g., SVC01-1 … SVC01-8).
+If subfields are provided, treat them as children of the parent field.
+
+For each field, return JSON with:
+- field_position (e.g., "01", "SVC01-1")
+- usage ("Required", "Optional", "Situational")
+- short_description
+- accepted_codes (as an object, {"CODE": "Definition"}), empty if none
+
+Input fields:
+{json.dumps(fields, indent=2)}
+
+Return JSON only, structured like:
+{{
+  "segment": "{segment_name}",
+  "fields": [
+    {{
+      "field_position": "01",
+      "usage": "Required",
+      "short_description": "Authorization Information Qualifier",
+      "accepted_codes": {{
+        "00": "No Authorization",
+        "01": "Authorization Present"
+      }}
+    }},
+    {{
+      "field_position": "SVC01-1",
+      "usage": "Required",
+      "short_description": "Product/Service ID Qualifier",
+      "accepted_codes": {{
+        "AD": "American Dental Association Codes",
+        "HC": "Healthcare Common Procedural Coding System"
+      }}
+    }}
+  ]
+}}
+No markdown, no explanation.
+"""
+    return llm.invoke(prompt).content
+
+
+
+
+
+
+
+
+
+
+
 import json
 import re
 from typing import List, Dict
