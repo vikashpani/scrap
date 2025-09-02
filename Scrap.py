@@ -1,4 +1,75 @@
 import json
+import re
+from typing import List, Dict
+
+def convert_rules(json_rules: List[Dict]) -> Dict:
+    """
+    Convert flat list of rules from companion guide JSON
+    into nested dictionary: {Segment: {Position: {rule details}}}
+    Handles duplicates by merging accepted codes.
+    """
+    rules_dict = {}
+
+    for rule in json_rules:
+        key_list = list(rule.values())
+
+        seg = key_list[0]  # Segment name
+        raw_pos = str(key_list[1])
+
+        # Extract digits only (normalize field position)
+        digits = re.findall(r"\d+", raw_pos)
+        if not digits:
+            continue
+        pos = digits[0].zfill(2)  # e.g., "1" → "01"
+
+        usage = key_list[2]
+        desc = key_list[3]
+
+        # Collect accepted codes
+        codes = []
+        try:
+            if isinstance(key_list[4], list):
+                if key_list[4] and isinstance(key_list[4][0], str):
+                    codes = key_list[4]
+                else:
+                    codes = [c["Code"] for c in key_list[4] if "Code" in c]
+        except Exception:
+            codes = []
+
+        # Initialize nested dict
+        if seg not in rules_dict:
+            rules_dict[seg] = {}
+
+        if pos not in rules_dict[seg]:
+            # Create new entry
+            rules_dict[seg][pos] = {
+                "usage": usage,
+                "description": desc,
+                "accepted_codes": set(codes)
+            }
+        else:
+            # Merge with existing entry
+            existing = rules_dict[seg][pos]
+            existing["accepted_codes"].update(codes)
+
+    # Convert sets back to lists for JSON serialization
+    for seg in rules_dict:
+        for pos in rules_dict[seg]:
+            rules_dict[seg][pos]["accepted_codes"] = list(rules_dict[seg][pos]["accepted_codes"])
+
+    with open("rules_dict.json", "w") as f:
+        json.dump(rules_dict, f, indent=2)
+
+    return rules_dict
+
+
+
+
+
+
+
+
+import json
 from typing import List, Dict
 from langchain.chat_models import AzureChatOpenAI
 from langchain.schema import HumanMessage
