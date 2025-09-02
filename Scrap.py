@@ -1,3 +1,169 @@
+import json
+from typing import List, Dict
+from langchain.chat_models import AzureChatOpenAI
+from langchain.schema import HumanMessage
+
+# --------------------------
+# 1. Load and convert rules
+# --------------------------
+
+def convert_rules(json_rules: List[Dict]) -> Dict:
+    """
+    Convert flat list of rules from companion guide JSON
+    into a nested dictionary: {Segment: {Position: {rule details}}}
+    """
+    rules_dict = {}
+    for rule in json_rules:
+        seg = rule["Segment Name"]
+        pos = rule["Field Position"]
+        usage = rule.get("Usage", "")
+        desc = rule.get("Short Description", "")
+        codes = [c["Code"] for c in rule.get("Accepted Codes", [])]
+
+        if seg not in rules_dict:
+            rules_dict[seg] = {}
+
+        rules_dict[seg][pos] = {
+            "usage": usage,
+            "description": desc,
+            "accepted_codes": codes
+        }
+    return rules_dict
+
+
+# --------------------------
+# 2. Setup LLM (Azure OpenAI)
+# --------------------------
+
+llm = AzureChatOpenAI(
+    deployment_name="gpt-4o",  # replace with your deployment
+    model="gpt-4o",
+    temperature=0
+)
+
+
+# --------------------------
+# 3. Validation Logic
+# --------------------------
+
+REQUIRED_SEGMENTS = ["ISA", "GS", "ST", "BPR", "TRN", "N1", "CLP", "SE", "GE", "IEA"]
+
+def validate_segment(segment: str, rules: Dict) -> Dict:
+    """
+    Validate one EDI segment and return a single dictionary
+    with overall status and per-field reasons.
+    """
+    elements = segment.split("*")
+    seg_id = elements[0].strip()
+
+    field_reasons = {}
+    overall_status = "Matched"
+
+    # ---------- Syntax check ----------
+    if not seg_id.isalpha():
+        return {
+            "edi_line": segment,
+            "status": "Invalid",
+            "rule_line": seg_id,
+            "reason": {"Syntax": "Invalid segment ID (not alphabetic)"}
+        }
+
+    # ---------- Mandatory check ----------
+    if seg_id in REQUIRED_SEGMENTS:
+        REQUIRED_SEGMENTS.remove(seg_id)
+
+    # ---------- Field-level validation ----------
+    if seg_id in rules:
+        seg_rules = rules[seg_id]
+        for pos, rule in seg_rules.items():
+            idx = int(pos) - 1
+            desc = rule["description"]
+
+            try:
+                value = elements[idx]
+            except IndexError:
+                field_reasons[f"{seg_id}{pos}"] = f"Invalid - Missing required field {desc}"
+                overall_status = "Invalid"
+                continue
+
+            # Required field check
+            if rule.get("usage") == "Required" and not value.strip():
+                field_reasons[f"{seg_id}{pos}"] = f"Invalid - {desc} is required"
+                overall_status = "Invalid"
+                continue
+
+            # Accepted codes check
+            if rule.get("accepted_codes"):
+                if value not in rule["accepted_codes"]:
+                    llm_reason = llm([HumanMessage(
+                        content=f"Field {seg_id}{pos} has invalid code '{value}'. "
+                                f"Valid codes are {rule['accepted_codes']}. "
+                                f"Describe the error in one sentence."
+                    )])
+                    reason = llm_reason.content if llm_reason else f"Invalid code {value}"
+                    field_reasons[f"{seg_id}{pos}"] = f"Invalid - {reason}"
+                    overall_status = "Invalid"
+                    continue
+
+            # If passed all checks
+            field_reasons[f"{seg_id}{pos}"] = f"Valid - {desc} = {value}"
+    else:
+        field_reasons[seg_id] = "No field-level rules; syntax OK"
+
+    return {
+        "edi_line": segment,
+        "status": overall_status,
+        "rule_line": seg_id,
+        "reason": field_reasons
+    }
+
+
+def validate_edi_file(edi_text: str, rules: Dict) -> List[Dict]:
+    """
+    Validate full EDI file line by line
+    """
+    segments = [seg.strip() for seg in edi_text.split("~") if seg.strip()]
+    all_results = [validate_segment(seg, rules) for seg in segments]
+
+    # Final mandatory check for missing segments
+    if REQUIRED_SEGMENTS:
+        for seg in REQUIRED_SEGMENTS:
+            all_results.append({
+                "edi_line": "N/A",
+                "status": "Invalid",
+                "rule_line": seg,
+                "reason": {seg: f"Mandatory segment {seg} missing in file"}
+            })
+    return all_results
+
+
+# --------------------------
+# 4. Run Example
+# --------------------------
+if __name__ == "__main__":
+    # Load rules.json (list of dicts)
+    with open("rules.json") as f:
+        json_rules = json.load(f)
+
+    RULES = convert_rules(json_rules)
+
+    # Load 835 EDI file
+    with open("835.edi") as f:
+        edi_text = f.read()
+
+    results = validate_edi_file(edi_text, RULES)
+
+    # Save output to JSON
+    with open("validation_results.json", "w") as f:
+        json.dump(results, f, indent=2)
+
+    print(json.dumps(results[:3], indent=2))  # show first 3 results
+
+
+
+
+
+
 import re
 
 def parse_segments(text):
