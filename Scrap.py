@@ -1,3 +1,39 @@
+from collections import defaultdict
+
+def build_segment_dicts(elements: list) -> dict:
+    """
+    Convert element-level docs into segment-wise dictionary.
+    Handles subfields like SVC01-1.
+    """
+    segments = defaultdict(list)
+
+    for elem in elements:
+        element_name = elem["Element"]   # e.g., "ISA01", "SVC01-1", "GS02"
+        text = elem.get("Text", "").strip()
+
+        # Handle composite/subfield case (e.g., "SVC01-1")
+        if "-" in element_name:
+            segment = element_name[:3]                 # "SVC"
+            field_position = element_name[3:]          # "01-1"
+        else:
+            if len(element_name) > 3:                  # e.g., "ISA01", "GS02"
+                segment = element_name[:3]
+                field_position = element_name[3:]
+            else:                                      # fallback (very short tags)
+                segment = element_name[:2]
+                field_position = element_name[2:]
+
+        segments[segment].append({
+            "field_position": field_position,
+            "text": text
+        })
+
+    return dict(segments)
+    
+
+
+
+
 def build_rules(elements, llm):
     """
     Main pipeline: process all elements → build segment dicts → query LLM → merge into rules.json
