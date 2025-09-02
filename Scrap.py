@@ -1,3 +1,44 @@
+import re
+from collections import defaultdict
+
+def build_segment_dicts(elements: list) -> dict:
+    """
+    Convert element-level docs into segment-wise dictionary.
+    Handles subfields like SVC01-1 by parsing from Text.
+    """
+    segments = defaultdict(dict)
+
+    for elem in elements:
+        element_name = elem["Element"]   # e.g., "SVC01"
+        text = elem["Text"]
+
+        # Base segment name (ISA, GS, SVC, etc.)
+        if len(element_name) >= 3:
+            segment = element_name[:3]
+        else:
+            segment = element_name[:2]
+
+        # --- Look for subfield markers like "SVC01 1", "SVC01 2" inside text ---
+        matches = re.findall(rf"{element_name}\s*(\d+)", text)
+
+        if matches:
+            # For each subfield found in the text, build key SVC01-<n>
+            for sub in matches:
+                field_position = f"{element_name}-{sub}"
+                segments[segment][field_position] = text
+        else:
+            # No subfields, store as normal
+            field_position = element_name[-2:]
+            segments[segment][element_name] = text
+
+    return segments
+
+
+
+
+
+
+
 from collections import defaultdict
 
 def build_segment_dicts(elements: list) -> dict:
