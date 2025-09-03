@@ -1,4 +1,61 @@
 import re
+from typing import List, Dict, Optional
+
+def extract_chunks(text: str) -> List[Dict[str, Optional[str]]]:
+    """
+    Extract chunks from text based on usage keywords followed by segment/position.
+    Example valid header: 'REQUIRED GS01 - 1' or 'SITUATIONAL ISA14'
+    """
+
+    # Regex pattern: usage + segment + position + optional sub-position
+    pattern = re.compile(
+        r"\b(REQUIRED|SITUATIONAL|NOT USED)\b\s+([A-Z]+)(\d{2})(?:\s*-\s*(\d+))?",
+        re.IGNORECASE
+    )
+
+    chunks = []
+    current_chunk = []
+    current_meta = None
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        match = pattern.search(line)
+        if match:
+            # save old chunk
+            if current_chunk and current_meta:
+                chunks.append({
+                    "Usage": current_meta[0].upper(),  # REQUIRED, etc.
+                    "Element": f"{current_meta[1]}{current_meta[2]}",  # GS01, ISA14
+                    "SubPos": current_meta[3],  # sub-position if exists
+                    "Text": " ".join(current_chunk).strip()
+                })
+
+            # start new chunk
+            current_meta = match.groups()
+            current_chunk = [line]
+        else:
+            if current_meta:
+                current_chunk.append(line)
+
+    # save last chunk
+    if current_chunk and current_meta:
+        chunks.append({
+            "Usage": current_meta[0].upper(),
+            "Element": f"{current_meta[1]}{current_meta[2]}",
+            "SubPos": current_meta[3],
+            "Text": " ".join(current_chunk).strip()
+        })
+
+    return chunks
+    
+
+
+
+
+import re
 from typing import List, Dict
 from langchain_core.documents import Document
 
