@@ -1,3 +1,69 @@
+from typing import List, Dict, Any
+from langchain_experimental.graph_transformers import LLMGraphTransformer
+from langchain_core.documents import Document
+
+class SafeLLMGraphTransformer:
+    """
+    A wrapper around LLMGraphTransformer that sanitizes relationships and nodes
+    before returning, so validation errors like 'target_node_id missing' are avoided.
+    """
+
+    def __init__(self, llm, **kwargs):
+        self._transformer = LLMGraphTransformer(llm=llm, **kwargs)
+
+    def _sanitize_relationship(self, rel: Dict[str, Any]) -> Dict[str, Any]:
+        """Ensure required keys exist for each relationship."""
+        rel.setdefault("source_node_id", rel.get("source", "unknown_source"))
+        rel.setdefault("target_node_id", rel.get("target", "unknown_target"))
+        rel.setdefault("source_node_type", rel.get("source_type", "UnknownType"))
+        rel.setdefault("target_node_type", rel.get("target_type", "UnknownType"))
+        rel.setdefault("type", rel.get("type", "UNKNOWN_REL"))
+        return rel
+
+    def _sanitize_node(self, node: Dict[str, Any]) -> Dict[str, Any]:
+        """Ensure required keys exist for each node."""
+        node.setdefault("id", node.get("id", node.get("name", "unknown_id")))
+        node.setdefault("type", node.get("type", "UnknownType"))
+        node.setdefault("properties", node.get("properties", {}))
+        return node
+
+    def convert_to_graph_documents(self, documents: List[Document], **kwargs):
+        graph_docs = self._transformer.convert_to_graph_documents(documents, **kwargs)
+
+        # Sanitize graph docs
+        for gdoc in graph_docs:
+            gdoc.nodes = [self._sanitize_node(node) for node in gdoc.nodes]
+            gdoc.relationships = [self._sanitize_relationship(rel) for rel in gdoc.relationships]
+
+        return graph_docs
+
+
+# ------------------ Example Usage ------------------
+
+from langchain_openai import AzureChatOpenAI
+
+llm = AzureChatOpenAI(
+    deployment_name="your-deployment",
+    temperature=0,
+    model="gpt-4o-mini"
+)
+
+safe_transformer = SafeLLMGraphTransformer(llm=llm)
+
+# Suppose your parsed PDF docs are already wrapped in langchain Documents:
+docs = [
+    Document(page_content="Example text about SVC01 element and its mapping")
+]
+
+graph_docs = safe_transformer.convert_to_graph_documents(docs)
+
+print(graph_docs[0].nodes)
+print(graph_docs[0].relationships)
+
+
+
+
+
 from langchain_openai import AzureChatOpenAI
 from langchain_core.output_parsers import PydanticOutputParser
 from typing import Type
