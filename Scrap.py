@@ -1,3 +1,18 @@
+transformer = LLMGraphTransformer(
+    llm=patched_llm,
+    prompt=(
+        "Extract nodes and relationships as JSON. "
+        "Each relationship must include: source_node_id, source_node_type, "
+        "target_node_id, target_node_type, type, properties (object). "
+        "Do not use 'source' or 'target'."
+    )
+)
+
+
+
+
+
+
 from typing import List, Dict, Any
 from langchain_experimental.graph_transformers import LLMGraphTransformer
 from langchain_core.documents import Document
