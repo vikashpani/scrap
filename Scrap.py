@@ -1,3 +1,81 @@
+import re
+from typing import List, Dict
+from langchain_core.documents import Document
+
+def parse_elements_from_page(text: str) -> List[Dict[str, str]]:
+    """
+    Parse one page of EDI spec text into chunks by REQUIRED/SITUATIONAL/NOT USED.
+    Extracts element IDs (e.g., GS01, GS01-1).
+    """
+    usage_pattern = re.compile(r"\b(REQUIRED|SITUATIONAL|NOT USED)\b", re.IGNORECASE)
+
+    parts = usage_pattern.split(text)
+    chunks = []
+
+    for i in range(1, len(parts), 2):  # usage marker, then block of text
+        usage = parts[i].strip().upper()
+        block = parts[i+1].strip()
+
+        elem_match = re.search(r"\b([A-Z]{2,3}\d{2}(?:-\d+)?)\b", block)
+        if not elem_match:
+            continue
+
+        element_id = elem_match.group(1)
+
+        # break down GS01-1 → segment=GS, position=01, subfield=1
+        seg_match = re.match(r"([A-Z]+)(\d{2})(?:-(\d+))?", element_id)
+        segment, position, subfield = None, None, None
+        if seg_match:
+            segment, position, subfield = seg_match.groups()
+
+        chunks.append({
+            "Usage": usage,
+            "Element": element_id,
+            "Segment": segment,
+            "Position": position,
+            "Subfield": subfield,
+            "Text": block
+        })
+
+    return chunks
+
+
+def parse_documents(docs: List[Document]) -> List[Dict[str, str]]:
+    """
+    Process a list of Documents (page by page) into structured element chunks.
+    """
+    all_chunks = []
+    for doc in docs:
+        page_chunks = parse_elements_from_page(doc.page_content)
+        all_chunks.extend(page_chunks)
+    return all_chunks
+
+
+# ---------------- Example Usage ----------------
+docs = [
+    Document(page_content="""
+REQUIRED GS01 479 Functional Identifier Code
+Code identifying a group of application related transaction sets
+
+REQUIRED GS02 142 Application Sender’s Code
+Use this code to identify the unit sending the information.
+
+REQUIRED GS03-1 124 Application Receiver’s Code
+Use this code to identify the unit receiving the information.
+""")
+]
+
+parsed_chunks = parse_documents(docs)
+
+for ch in parsed_chunks:
+    print(ch)
+    
+
+
+
+
+
+
 transformer = LLMGraphTransformer(
     llm=patched_llm,
     prompt=(
