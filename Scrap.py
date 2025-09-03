@@ -1,3 +1,49 @@
+from langchain_openai import AzureChatOpenAI
+from langchain_core.output_parsers import PydanticOutputParser
+from typing import Type
+from pydantic import BaseModel
+
+
+class LLMWithStructuredOutput:
+    """Wrapper to patch missing .with_structured_output in LangChain 0.3.x"""
+
+    def __init__(self, llm):
+        self.llm = llm
+
+    def __getattr__(self, name):
+        # Forward everything else to the underlying llm
+        return getattr(self.llm, name)
+
+    def with_structured_output(self, schema: Type[BaseModel], **kwargs):
+        parser = PydanticOutputParser(pydantic_object=schema)
+        return self.llm | parser
+
+
+# ---- Example usage ----
+
+# Your AzureChatOpenAI instance
+azure_llm = AzureChatOpenAI(
+    deployment_name="your-deployment",
+    model="gpt-4o-mini",
+    temperature=0,
+)
+
+# Wrap it
+patched_llm = LLMWithStructuredOutput(azure_llm)
+
+# Now pass this into LLMGraphTransformer
+from langchain_experimental.graph_transformers import LLMGraphTransformer
+
+llm_transformer = LLMGraphTransformer(
+    llm=patched_llm,
+    # optional schema arguments...
+)
+
+
+
+
+
+
 import re
 from collections import defaultdict
 
