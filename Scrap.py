@@ -1,3 +1,15 @@
+import pandas as pd
+
+# Load Excel
+df = pd.read_excel("input.xlsx")
+
+# Suppose the column name is "date_column"
+df["date_column"] = pd.to_datetime(df["date_column"]).dt.strftime("%Y%m%d")
+
+# Save back to Excel
+df.to_excel("output.xlsx", index=False)
+
+
 import json
 import re
 from typing import List, Dict, Any
