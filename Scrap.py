@@ -1,3 +1,85 @@
+import json
+import re
+from typing import List, Dict, Any
+
+def convert_rules(json_rules: List[Dict[str, Any]]) -> Dict:
+    """
+    Convert flat list of rules into nested dict:
+    {
+      SegmentName: {
+        FieldPosition: {
+          SubPosition: {
+            "usage": str,
+            "description": str,
+            "accepted_codes": [{"Code": str, "Definition": str}]
+          }
+        }
+      }
+    }
+    Handles duplicates by merging accepted codes.
+    """
+
+    rules_dict: Dict[str, Dict[str, Dict[str, Any]]] = {}
+
+    for rule in json_rules:
+        seg = rule.get("SegmentName", "").strip()
+        raw_pos = str(rule.get("FieldPosition", "")).strip()
+        sub_pos = str(rule.get("SubPosition", "")).strip()
+
+        # Normalize field position (digits only, padded to 2)
+        digits = re.findall(r"\d+", raw_pos)
+        if not digits:
+            continue
+        pos = digits[0].zfill(2)
+
+        usage = rule.get("Usage", "").strip()
+        desc = rule.get("ShortDescription", "").strip()
+        codes = rule.get("AcceptedCodes", [])
+
+        # Normalize codes into list of dicts
+        norm_codes = []
+        for c in codes:
+            if isinstance(c, dict):
+                code_val = c.get("Code", "").strip()
+                def_val = c.get("Definition", "").strip()
+                if code_val:
+                    norm_codes.append({"Code": code_val, "Definition": def_val})
+            elif isinstance(c, str):
+                norm_codes.append({"Code": c, "Definition": ""})
+
+        # Ensure nesting exists
+        if seg not in rules_dict:
+            rules_dict[seg] = {}
+        if pos not in rules_dict[seg]:
+            rules_dict[seg][pos] = {}
+        if sub_pos not in rules_dict[seg][pos]:
+            rules_dict[seg][pos][sub_pos] = {
+                "usage": usage,
+                "description": desc,
+                "accepted_codes": []
+            }
+
+        # Merge accepted codes without duplication
+        existing_codes = rules_dict[seg][pos][sub_pos]["accepted_codes"]
+        existing_set = {(c["Code"], c["Definition"]) for c in existing_codes}
+        for c in norm_codes:
+            key = (c["Code"], c["Definition"])
+            if key not in existing_set:
+                existing_codes.append(c)
+                existing_set.add(key)
+
+    # Save to JSON
+    with open("rules_dict.json", "w") as f:
+        json.dump(rules_dict, f, indent=2)
+
+    return rules_dict
+    
+
+
+
+
+
+
 prompt = f"""
 You are given part of an EDI implementation guideline.
 
