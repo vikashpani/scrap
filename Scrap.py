@@ -1,5 +1,76 @@
 import re
 from typing import List, Dict, Optional
+from langchain_core.documents import Document
+
+# Regex: usage keyword + segment + position + optional sub-position
+HEADER_PATTERN = re.compile(
+    r"\b(REQUIRED|SITUATIONAL|NOT USED)\b\s+([A-Z]+)(\d{2})(?:\s*-\s*(\d+))?",
+    re.IGNORECASE
+)
+
+def element_based_parsing(docs: List[Document]) -> List[Dict[str, Optional[str]]]:
+    """
+    Parse PDF docs into element-based chunks.
+    Ensures multi-page elements are merged, and only valid headers are chunk splitters.
+    """
+
+    chunks = []
+    current_chunk = []
+    current_meta = None
+
+    # Iterate through all pages in sequence
+    for doc in docs:
+        for line in doc.page_content.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+
+            match = HEADER_PATTERN.search(line)
+            if match:
+                # Found a valid header -> close previous chunk
+                if current_chunk and current_meta:
+                    chunks.append({
+                        "Usage": current_meta[0].upper(),
+                        "Element": f"{current_meta[1]}{current_meta[2]}",
+                        "SubPos": current_meta[3],
+                        "Text": " ".join(current_chunk).strip()
+                    })
+
+                # Start new chunk
+                current_meta = match.groups()
+                current_chunk = [line]
+            else:
+                # Continuation of current element
+                if current_meta:
+                    current_chunk.append(line)
+
+    # Save last chunk
+    if current_chunk and current_meta:
+        chunks.append({
+            "Usage": current_meta[0].upper(),
+            "Element": f"{current_meta[1]}{current_meta[2]}",
+            "SubPos": current_meta[3],
+            "Text": " ".join(current_chunk).strip()
+        })
+
+    # 🔑 Merge chunks across pages if same element/subpos
+    merged = []
+    for chunk in chunks:
+        if merged and (
+            merged[-1]["Element"] == chunk["Element"]
+            and merged[-1]["SubPos"] == chunk["SubPos"]
+            and merged[-1]["Usage"] == chunk["Usage"]
+        ):
+            # extend previous chunk text
+            merged[-1]["Text"] += " " + chunk["Text"]
+        else:
+            merged.append(chunk)
+
+    return merged
+    
+
+import re
+from typing import List, Dict, Optional
 
 def extract_chunks(text: str) -> List[Dict[str, Optional[str]]]:
     """
