@@ -1,3 +1,46 @@
+prompt = f"""
+You are given part of an EDI implementation guideline.
+
+Extract validation rules for segments and fields.
+
+Rules must include these keys:
+
+- "SegmentName": The segment name (example: ISA, GS, ST, SVC).
+- "FieldPosition": The field position number (example: 01, 02, 03).
+- "SubPosition": The sub-position if available (example: 8), otherwise empty string.
+- "Usage": One of [Required, Situational, Not Used].
+- "ShortDescription": A short description of the field.
+- "AcceptedCodes": A list of objects with keys:
+    - "Code": the code value
+    - "Definition": explanation of the code
+
+Input text:
+{chunk}
+
+Return only a JSON list of rules in this exact format:
+
+[
+  {{
+    "SegmentName": "ST",
+    "FieldPosition": "01",
+    "SubPosition": "",
+    "Usage": "Required",
+    "ShortDescription": "Transaction Set Identifier Code",
+    "AcceptedCodes": [
+      {{
+        "Code": "835",
+        "Definition": "Health Care Claim Payment/Advice"
+      }}
+    ]
+  }}
+]
+"""
+
+
+
+
+
+
 import re
 from typing import List, Dict, Optional
 from langchain_core.documents import Document
