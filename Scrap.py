@@ -1,3 +1,134 @@
+import re
+from typing import Dict, List
+
+# Example: rules dict after your JSON conversion
+# rules = {
+#   "ISA": {
+#     "01": {
+#       "usage": "REQUIRED",
+#       "description": "Authorization Information Qualifier",
+#       "accepted_codes": [
+#           {"Code": "00", "Definition": "No Authorization Information Present"},
+#           {"Code": "03", "Definition": "Additional Data Identification"}
+#       ]
+#     },
+#     "02": {...}
+#   }
+# }
+
+REQUIRED_SEGMENTS = {"ISA", "GS", "ST"}  # adjust as per your guide
+
+
+def validate_segment(segment: str, rules: Dict) -> Dict:
+    """
+    Validate one EDI segment against rules.
+    Handles subfields (e.g., SVC*01-1:01-2*...).
+    """
+    elements = segment.split("*")
+    seg_id = elements[0].strip()
+
+    field_reasons = {}
+    overall_status = "Matched"
+
+    # Syntax check
+    if not seg_id.isalpha():
+        return {
+            "edi_line": segment,
+            "status": "Invalid",
+            "rule_line": seg_id,
+            "reason": {"Syntax": "Invalid segment ID (not alphabetic)"}
+        }
+
+    # Remove from required segments if present
+    if seg_id in REQUIRED_SEGMENTS:
+        REQUIRED_SEGMENTS.remove(seg_id)
+
+    # Field-level validation
+    if seg_id in rules:
+        seg_rules = rules[seg_id]
+
+        for pos, rule in seg_rules.items():
+            idx = int(pos)  # 01 -> 1, etc.
+
+            try:
+                value = elements[idx]
+            except IndexError:
+                field_reasons[f"{seg_id}-{pos}"] = f"Invalid: Missing required field ({rule['description']})"
+                overall_status = "Invalid"
+                continue
+
+            # Subfield check (e.g., 01-1:01-2)
+            subfields = value.split(":") if ":" in value else [value]
+
+            # Loop through subfields
+            for sub_idx, sub_val in enumerate(subfields, start=1):
+                sub_key = f"{seg_id}-{pos}-{sub_idx}" if len(subfields) > 1 else f"{seg_id}-{pos}"
+
+                # Usage check
+                if rule.get("usage", "").upper() == "REQUIRED" and not sub_val.strip():
+                    field_reasons[sub_key] = f"Invalid: {rule['description']} is required"
+                    overall_status = "Invalid"
+                    continue
+
+                # Accepted codes check
+                valid_codes = []
+                valid_defs = {}
+                if rule.get("accepted_codes"):
+                    if isinstance(rule["accepted_codes"], list):
+                        for c in rule["accepted_codes"]:
+                            if isinstance(c, dict) and "Code" in c:
+                                valid_codes.append(c["Code"])
+                                valid_defs[c["Code"]] = c.get("Definition", "")
+                            elif isinstance(c, str):
+                                valid_codes.append(c)
+                                valid_defs[c] = ""
+
+                if valid_codes:
+                    if sub_val not in valid_codes:
+                        defs_str = ", ".join([f"{c}: {valid_defs[c]}" if valid_defs[c] else c for c in valid_codes])
+                        field_reasons[sub_key] = f"Invalid: Invalid code '{sub_val}'. Valid codes: {defs_str}"
+                        overall_status = "Invalid"
+                        continue
+
+                # If passed all checks
+                field_reasons[sub_key] = f"Valid: {rule['description']} ({sub_val})"
+
+    else:
+        field_reasons[seg_id] = "No field-level rules; syntax OK"
+
+    return {
+        "edi_line": segment,
+        "status": overall_status,
+        "rule_line": seg_id,
+        "reason": field_reasons
+    }
+
+
+def validate_edi_file(edi_text: str, rules: Dict) -> List[Dict]:
+    """
+    Validate full EDI file line by line.
+    """
+    segments = [seg.strip() for seg in edi_text.split("~") if seg.strip()]
+    all_results = [validate_segment(seg, rules) for seg in segments]
+
+    # Final mandatory check – for missing segments
+    if REQUIRED_SEGMENTS:
+        for seg in list(REQUIRED_SEGMENTS):
+            all_results.append({
+                "edi_line": "N/A",
+                "status": "Invalid",
+                "rule_line": seg,
+                "reason": {seg: f"Mandatory segment {seg} missing in file"}
+            })
+
+    return all_results
+    
+
+
+
+
+
+
 from typing import List, Dict
 
 # Example REQUIRED_SEGMENTS (you’ll define based on Companion Guide)
