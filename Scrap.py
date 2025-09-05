@@ -1,3 +1,42 @@
+from typing import List, Dict
+
+# Example REQUIRED_SEGMENTS (you’ll define based on Companion Guide)
+REQUIRED_SEGMENTS = {"ISA", "GS", "ST", "SE", "GE", "IEA"}  
+
+def validate_edi_file(edi_text: str, rules: Dict) -> List[Dict]:
+    """
+    Validate full EDI file line by line against Companion Guide rules.
+    Also performs a final check for missing mandatory segments.
+    """
+    # Split EDI text into segments (~ is the segment terminator)
+    segments = [seg.strip() for seg in edi_text.split("~") if seg.strip()]
+
+    all_results = []
+
+    # Copy REQUIRED_SEGMENTS so we don’t mutate global set directly
+    remaining_required = set(REQUIRED_SEGMENTS)
+
+    for seg in segments:
+        result = validate_segment(seg, rules, remaining_required)
+        all_results.append(result)
+
+    # Final mandatory check — see if any required segments were never found
+    if remaining_required:
+        for seg in remaining_required:
+            all_results.append({
+                "edi_line": "N/A",
+                "status": "Invalid",
+                "rule_line": seg,
+                "reason": {seg: f"Mandatory segment {seg} missing in file"}
+            })
+
+    return all_results
+    
+
+
+
+
+
 def validate_segment(segment, rules, REQUIRED_SEGMENTS, llm=None):
     field_reasons = {}
     overall_status = "Matched"
