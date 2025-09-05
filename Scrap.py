@@ -1,3 +1,113 @@
+def validate_segment(segment, rules, REQUIRED_SEGMENTS, llm=None):
+    field_reasons = {}
+    overall_status = "Matched"
+
+    # Split into fields
+    elements = segment.split("*")
+
+    # Normalize segment ID
+    if len(elements[0]) > 3:
+        elements[0] = elements[0][:3]
+
+    seg_id = elements[0].strip()
+
+    # -----------------
+    # Syntax check
+    # -----------------
+    if not seg_id.isalpha():
+        return {
+            "edi line": segment,
+            "status": "Invalid",
+            "rule line": seg_id,
+            "reason": {"Syntax": "Invalid segment ID (not alphabetic)"}
+        }
+
+    # -----------------
+    # Mandatory check
+    # -----------------
+    if seg_id in REQUIRED_SEGMENTS:
+        REQUIRED_SEGMENTS.remove(seg_id)
+
+    # -----------------
+    # Field-level validation (including subfields)
+    # -----------------
+    if seg_id in rules:
+        seg_rules = rules[seg_id]
+
+        for pos, rule in seg_rules.items():
+            idx = int(pos)
+            desc = rule["description"]
+
+            try:
+                value = elements[idx]
+            except IndexError:
+                field_reasons[f"{seg_id}-{pos}"] = f"Invalid: Missing required field ({desc})"
+                overall_status = "Invalid"
+                continue
+
+            # --- Subfield handling ---
+            if ":" in value:
+                subfields = value.split(":")
+                for sub_idx, sub_val in enumerate(subfields, start=1):
+                    sub_key = f"{seg_id}-{pos}-{sub_idx}"
+
+                    if rule.get("usage") == "Required" and not sub_val.strip():
+                        field_reasons[sub_key] = f"Invalid: Subfield {sub_idx} of {desc} is required"
+                        overall_status = "Invalid"
+                        continue
+
+                    if rule.get("accepted_codes") and sub_val not in rule["accepted_codes"]:
+                        llm_reason = None
+                        if llm:
+                            llm_reason = llm([
+                                HumanMessage(content=f"Field {seg_id}-{pos} subfield {sub_idx} "
+                                                     f"has invalid code '{sub_val}'. "
+                                                     f"Valid codes are {rule['accepted_codes']}. "
+                                                     f"Describe the error in one sentence.")
+                            ])
+
+                        reason = llm_reason.content if llm_reason else f"Invalid code '{sub_val}'"
+                        field_reasons[sub_key] = f"Invalid: {reason}"
+                        overall_status = "Invalid"
+                        continue
+
+                    field_reasons[sub_key] = f"Valid: {desc} (subfield {sub_idx}: {sub_val})"
+
+            else:
+                # --- Normal field handling ---
+                if rule.get("usage") == "Required" and not value.strip():
+                    field_reasons[f"{seg_id}-{pos}"] = f"Invalid: {desc} is required"
+                    overall_status = "Invalid"
+                    continue
+
+                if rule.get("accepted_codes") and value not in rule["accepted_codes"]:
+                    llm_reason = None
+                    if llm:
+                        llm_reason = llm([
+                            HumanMessage(content=f"Field {seg_id}-{pos} has invalid code '{value}'. "
+                                                 f"Valid codes are {rule['accepted_codes']}. "
+                                                 f"Describe the error in one sentence.")
+                        ])
+                    reason = llm_reason.content if llm_reason else f"Invalid code '{value}'"
+                    field_reasons[f"{seg_id}-{pos}"] = f"Invalid: {reason}"
+                    overall_status = "Invalid"
+                    continue
+
+                field_reasons[f"{seg_id}-{pos}"] = f"Valid: {desc} ({value})"
+    else:
+        field_reasons[seg_id] = "No field-level rules; syntax OK"
+
+    # -----------------
+    # Final result
+    # -----------------
+    return {
+        "edi line": segment,
+        "status": overall_status,
+        "rule line": seg_id,
+        "reason": field_reasons
+    }
+    
+
 import json
 from typing import List, Dict, Any
 
