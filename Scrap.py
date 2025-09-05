@@ -1,3 +1,90 @@
+import json
+from typing import List, Dict, Any
+
+def convert_rules(json_rules: List[Dict[str, Any]]) -> Dict:
+    """
+    Convert flat rules list into nested dict:
+    {Segment: {FieldPos: {details + subfields}}}
+    Dedupes codes, merges subfields into a list.
+    """
+
+    rules_dict: Dict[str, Dict[str, Any]] = {}
+
+    for rule in json_rules:
+        seg = rule.get("SegmentName", "").strip()
+        field_pos = str(rule.get("FieldPosition", "")).zfill(2)  # "01"
+        sub_pos = str(rule.get("SubPosition", "")).strip()
+
+        usage = rule.get("Usage", "").strip()
+        desc = rule.get("ShortDescription", "").strip()
+        codes = rule.get("AcceptedCodes", [])
+
+        # Normalize codes
+        norm_codes = []
+        for c in codes:
+            if isinstance(c, dict):
+                code_val = str(c.get("Code", "")).strip()
+                def_val = str(c.get("Definition", "")).strip()
+                if code_val:
+                    norm_codes.append({"Code": code_val, "Definition": def_val})
+            elif isinstance(c, str):
+                norm_codes.append({"Code": c, "Definition": ""})
+
+        # Init segment + field
+        if seg not in rules_dict:
+            rules_dict[seg] = {}
+        if field_pos not in rules_dict[seg]:
+            rules_dict[seg][field_pos] = {
+                "usage": usage,
+                "description": desc,
+                "accepted_codes": [],
+                "subfields": []
+            }
+
+        if sub_pos and sub_pos != "":  # It's a subfield
+            # Merge into subfields list
+            sub_entry = {
+                "sub_pos": sub_pos,
+                "usage": usage,
+                "description": desc,
+                "accepted_codes": []
+            }
+            existing_codes = {(c["Code"], c["Definition"]) for c in sub_entry["accepted_codes"]}
+            for c in norm_codes:
+                key = (c["Code"], c["Definition"])
+                if key not in existing_codes:
+                    sub_entry["accepted_codes"].append(c)
+                    existing_codes.add(key)
+
+            # Avoid duplicate subfields
+            existing_subs = rules_dict[seg][field_pos]["subfields"]
+            if not any(sf["sub_pos"] == sub_pos for sf in existing_subs):
+                existing_subs.append(sub_entry)
+
+        else:  # It's the main field
+            existing_codes = {(c["Code"], c["Definition"]) for c in rules_dict[seg][field_pos]["accepted_codes"]}
+            for c in norm_codes:
+                key = (c["Code"], c["Definition"])
+                if key not in existing_codes:
+                    rules_dict[seg][field_pos]["accepted_codes"].append(c)
+                    existing_codes.add(key)
+
+    # Save to JSON
+    with open("rules_dict.json", "w") as f:
+        json.dump(rules_dict, f, indent=2)
+
+    return rules_dict
+
+
+
+
+
+
+
+
+
+
+
 import pandas as pd
 
 # Load Excel
