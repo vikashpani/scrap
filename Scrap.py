@@ -4,6 +4,168 @@ import os
 import datetime
 from typing import Dict, List
 
+from langchain_openai import AzureChatOpenAI
+from langchain.prompts import ChatPromptTemplate
+
+
+# ----------------------
+# Azure OpenAI Setup
+# ----------------------
+def get_llm():
+    return AzureChatOpenAI(
+        openai_api_base=st.session_state.get("AZURE_OPENAI_ENDPOINT"),
+        openai_api_version="2023-07-01-preview",
+        deployment_name=st.session_state.get("AZURE_DEPLOYMENT_NAME"),
+        openai_api_key=st.session_state.get("AZURE_OPENAI_KEY"),
+        temperature=0
+    )
+
+
+# ----------------------
+# Helpers
+# ----------------------
+
+def load_json(path):
+    with open(path, "r") as f:
+        return json.load(f)
+
+def save_json(obj, path):
+    with open(path, "w") as f:
+        json.dump(obj, f, indent=2)
+
+def save_version(rules_dict, version_dir="rule_versions"):
+    os.makedirs(version_dir, exist_ok=True)
+    version_name = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = os.path.join(version_dir, f"rules_{version_name}.json")
+    save_json(rules_dict, path)
+    return version_name, path
+
+def list_versions(version_dir="rule_versions"):
+    if not os.path.exists(version_dir):
+        return []
+    return sorted(os.listdir(version_dir))
+
+def load_version(filename, version_dir="rule_versions"):
+    path = os.path.join(version_dir, filename)
+    return load_json(path)
+
+
+# ----------------------
+# Healing with LLM
+# ----------------------
+
+def propose_fixes(invalid_results, valid_edi_text, rules_dict):
+    llm = get_llm()
+    prompt = ChatPromptTemplate.from_template("""
+You are an EDI rules repair assistant.
+We have a base rules JSON, invalid validation results, and a valid EDI sample.
+
+Base Rules (do not change structure, only update usage or accepted codes where necessary):
+{rules_dict}
+
+Invalid Results (these fields failed validation):
+{invalid_results}
+
+Valid EDI (reference):
+{valid_edi_text}
+
+Task:
+- Suggest minimal modifications to the rules.
+- Only update fields and segments that are invalid.
+- Preserve the JSON structure (do not delete or add unrelated keys).
+- If you suggest new accepted codes, return them in the form:
+  {{"segment": "...", "position": "...", "proposed_add": "...", "reason": "..."}}
+
+Return ONLY a JSON list of suggestions.
+""")
+
+    chain = prompt | llm
+    response = chain.invoke({
+        "rules_dict": json.dumps(rules_dict, indent=2),
+        "invalid_results": json.dumps(invalid_results, indent=2),
+        "valid_edi_text": valid_edi_text
+    })
+
+    try:
+        return json.loads(response.content)
+    except:
+        return []
+
+
+# ----------------------
+# Healing UI
+# ----------------------
+
+st.subheader("Heal Rules")
+
+# Azure credentials in sidebar
+with st.sidebar:
+    st.text_input("Azure OpenAI Endpoint", key="AZURE_OPENAI_ENDPOINT")
+    st.text_input("Deployment Name", key="AZURE_DEPLOYMENT_NAME")
+    st.text_input("API Key", type="password", key="AZURE_OPENAI_KEY")
+
+# Load validation results
+if os.path.exists("validation_results.json") and "rules_dict" in st.session_state:
+    results = load_json("validation_results.json")
+    invalid_results = [r for r in results if r["status"] != "Valid"]
+
+    if invalid_results:
+        heal_file = st.file_uploader("Upload valid EDI for healing", type=["txt", "edi"], key="heal")
+
+        if heal_file:
+            valid_edi_text = heal_file.read().decode("utf-8")
+
+            if st.button("Generate Healing Suggestions"):
+                proposals = propose_fixes(invalid_results, valid_edi_text, st.session_state["rules_dict"])
+
+                if proposals:
+                    st.write("🔍 Proposed Fixes (approve to apply):")
+
+                    approvals = []
+                    for i, p in enumerate(proposals):
+                        with st.expander(f"{p['segment']}:{p['position']}"):
+                            st.json(p)
+                            approve = st.checkbox(f"Approve {p['segment']}:{p['position']}", key=f"approve_{i}")
+                            if approve:
+                                approvals.append(p)
+
+                    if st.button("Apply Approved Fixes"):
+                        modified_rules = st.session_state["rules_dict"]
+
+                        for p in approvals:
+                            seg, pos = p["segment"], p["position"]
+                            if "accepted_codes" not in modified_rules[seg][pos]:
+                                modified_rules[seg][pos]["accepted_codes"] = []
+                            modified_rules[seg][pos]["accepted_codes"].append(
+                                {"Code": p["proposed_add"], "Definition": "Healed by LLM + user approval"}
+                            )
+
+                        version_name, _ = save_version(modified_rules)
+                        st.success(f"Saved healed rules as version {version_name}")
+                        st.session_state["rules_dict"] = modified_rules
+                else:
+                    st.info("No suggestions generated by LLM.")
+    else:
+        st.info("✅ No invalid results found. Nothing to heal.")
+
+
+
+
+
+
+
+
+
+
+
+
+
+import streamlit as st
+import json
+import os
+import datetime
+from typing import Dict, List
+
 # ----------------------
 # Helper functions
 # ----------------------
