@@ -1,3 +1,147 @@
+import streamlit as st
+import json
+import os
+import datetime
+from typing import Dict, List
+
+# ----------------------
+# Helper functions
+# ----------------------
+
+def load_rules(file) -> Dict:
+    return json.load(file)
+
+def convert_rules(json_rules: List[Dict]) -> Dict:
+    """Convert flat list into nested rules_dict (like before)."""
+    rules_dict = {}
+    for rule in json_rules:
+        seg = rule.get("SegmentName", "").strip()
+        pos = str(rule.get("FieldPosition", "")).zfill(2)
+        subpos = str(rule.get("SubPosition", "")).strip()
+
+        if not seg or not pos:
+            continue
+
+        if seg not in rules_dict:
+            rules_dict[seg] = {}
+
+        if pos not in rules_dict[seg]:
+            rules_dict[seg][pos] = {
+                "usage": rule.get("Usage", ""),
+                "description": rule.get("ShortDescription", ""),
+                "accepted_codes": rule.get("AcceptedCodes", []),
+                "subfields": {}
+            }
+
+        # Handle subfields
+        if subpos:
+            rules_dict[seg][pos]["subfields"][subpos] = {
+                "usage": rule.get("Usage", ""),
+                "description": rule.get("ShortDescription", ""),
+                "accepted_codes": rule.get("AcceptedCodes", [])
+            }
+
+    return rules_dict
+
+def validate_edi(edi_text: str, rules: Dict) -> List[Dict]:
+    """Fake validator stub - plug your validate_segment here"""
+    results = [{"edi_line": line, "status": "Valid"} for line in edi_text.split("~") if line.strip()]
+    return results
+
+def save_version(rules_dict, version_dir="rule_versions"):
+    """Save a new version of rules_dict with timestamp."""
+    os.makedirs(version_dir, exist_ok=True)
+    version_name = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = os.path.join(version_dir, f"rules_{version_name}.json")
+    with open(path, "w") as f:
+        json.dump(rules_dict, f, indent=2)
+    return version_name, path
+
+def list_versions(version_dir="rule_versions"):
+    if not os.path.exists(version_dir):
+        return []
+    return sorted(os.listdir(version_dir))
+
+def load_version(filename, version_dir="rule_versions"):
+    path = os.path.join(version_dir, filename)
+    with open(path, "r") as f:
+        return json.load(f)
+
+
+# ----------------------
+# Streamlit UI
+# ----------------------
+
+st.sidebar.title("EDI Rule Validator")
+
+# Upload base rules
+st.sidebar.subheader("Base Rules")
+base_rules_file = st.sidebar.file_uploader("Upload base rules.json", type="json")
+
+llm_details = st.sidebar.text_area("LLM Details (API keys, endpoint, etc.)", "")
+
+if base_rules_file:
+    base_rules = load_rules(base_rules_file)
+    rules_dict = convert_rules(base_rules)
+    st.session_state["base_rules"] = base_rules
+    st.session_state["rules_dict"] = rules_dict
+    st.sidebar.success("Base rules loaded and converted ✅")
+
+    if st.sidebar.button("Save Initial Rules Version"):
+        version_name, _ = save_version(rules_dict)
+        st.sidebar.success(f"Saved as version {version_name}")
+
+
+# Main page
+st.title("EDI Validator")
+
+# Upload EDI
+edi_file = st.file_uploader("Upload EDI file", type=["txt", "edi"])
+
+if edi_file and "rules_dict" in st.session_state:
+    edi_text = edi_file.read().decode("utf-8")
+
+    if st.button("Validate"):
+        results = validate_edi(edi_text, st.session_state["rules_dict"])
+        with open("validation_results.json", "w") as f:
+            json.dump(results, f, indent=2)
+        st.json(results)
+        st.success("Validation results saved to validation_results.json ✅")
+
+
+# Healing Section
+st.subheader("Heal Rules")
+if edi_file and "rules_dict" in st.session_state:
+    heal_file = st.file_uploader("Upload valid EDI for healing", type=["txt", "edi"], key="heal")
+    if heal_file and st.button("Modify Rules"):
+        edi_text = heal_file.read().decode("utf-8")
+        # TODO: Add logic: analyze edi_text + failed validations → update rules
+        # For now, simulate a modification
+        modified_rules = st.session_state["rules_dict"]
+        modified_rules["ISA"]["01"]["accepted_codes"].append({"Code": "99", "Definition": "Test Override"})
+
+        version_name, _ = save_version(modified_rules)
+        st.success(f"Rules healed and saved as version {version_name}")
+
+
+# Version Management
+st.subheader("Rule Versions")
+versions = list_versions()
+if versions:
+    selected_version = st.selectbox("Select version", versions)
+    if st.button("Load Version"):
+        st.session_state["rules_dict"] = load_version(selected_version)
+        st.success(f"Loaded {selected_version}")
+
+
+
+
+
+
+
+
+
+
 import re
 from typing import Dict, List
 
