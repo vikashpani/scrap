@@ -1,3 +1,91 @@
+def propose_fixes(invalid_results, valid_edi_text, rules_dict, llm):
+    """
+    Use LLM to propose minimal rule fixes based on invalid validation results
+    and a valid EDI reference. Proposals may include both usage updates and
+    accepted code additions inside `proposed_change`. Works for both fields
+    and subfields.
+    """
+    import json
+    from langchain.prompts import ChatPromptTemplate
+
+    prompt = ChatPromptTemplate.from_template("""
+You are an EDI rules repair assistant.
+
+We have a base rules JSON, invalid validation results, and a valid EDI sample.
+
+Base Rules (do not change structure, only update usage or accepted codes where necessary):
+{rules_dict}
+
+Invalid Results (these fields failed validation):
+{invalid_results}
+
+Valid EDI (reference):
+{valid_edi_text}
+
+Task:
+- Suggest minimal modifications to the rules.  
+- Only update fields, subfields, or segments that are invalid.  
+- Preserve the JSON structure (do not delete or add unrelated keys).  
+
+Rules:
+- If a REQUIRED field or subfield is empty in EDI, propose BOTH:
+  1. update_usage → "SITUATIONAL"
+  2. add_code with "Code": "" and a Definition explaining blank is allowed.  
+- If a code is present in EDI but missing from accepted_codes, propose to add it.  
+- If accepted_codes exist but are wrong, propose either:
+  - replacement (with `update_codes`)  
+  - or clearing them (`empty_codes: true`).  
+- If a missing subfield is detected, include "sub_pos" in your proposal so we can locate it.  
+
+Return ONLY a JSON list of suggestions in this format:
+
+[
+  {
+    "segment": "ISA",
+    "position": "02",
+    "proposed_change": {
+      "update_usage": "SITUATIONAL",
+      "add_code": {
+        "Code": "",
+        "Definition": "Authorization Information may be blank"
+      }
+    },
+    "reason": "Field was REQUIRED in rules but EDI shows no value. Suggest changing to SITUATIONAL so blanks are allowed."
+  },
+  {
+    "segment": "SVC",
+    "position": "01",
+    "sub_pos": "2",
+    "proposed_change": {
+      "add_code": {
+        "Code": "AD",
+        "Definition": "American Dental Association Codes"
+      }
+    },
+    "reason": "Subfield SVC-01-2 value 'AD' is present in EDI but missing from accepted codes."
+  }
+]
+""")
+
+    chain = prompt | llm
+    response = chain.invoke({
+        "rules_dict": json.dumps(rules_dict, indent=2),
+        "invalid_results": json.dumps(invalid_results, indent=2),
+        "valid_edi_text": valid_edi_text
+    })
+
+    try:
+        parsed_rules = response.content.strip().replace("```json", "").replace("```", "")
+        return json.loads(parsed_rules)
+    except Exception:
+        return []
+       
+
+
+
+
+
+
 from langchain.prompts import ChatPromptTemplate
 
 prompt = ChatPromptTemplate.from_template("""
