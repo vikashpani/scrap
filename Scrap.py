@@ -8,6 +8,94 @@ if heal_file:
             st.session_state["rules_dict"],
             llm
         )
+        st.session_state["proposals"] = proposals  # ✅ save proposals in session
+        st.session_state["approvals"] = []         # reset approvals when regenerating
+
+    # Show proposals if present
+    if "proposals" in st.session_state and st.session_state["proposals"]:
+        st.write("### Proposed Fixes (approve to apply):")
+
+        # Load or create approvals state
+        if "approvals" not in st.session_state:
+            st.session_state["approvals"] = []
+
+        approvals = []
+        for i, p in enumerate(st.session_state["proposals"]):
+            seg, pos = p.get("segment"), p.get("position")
+            label = f"{seg}:{pos}"
+            if "sub_pos" in p:
+                label += f"-{p['sub_pos']}"
+
+            with st.expander(label):
+                st.json(p)
+
+            approve = st.checkbox(
+                f"Approve {label}",
+                key=f"approve_{i}",
+                value=(p in st.session_state["approvals"])  # ✅ persist across reruns
+            )
+            if approve:
+                approvals.append(p)
+
+        # Update session approvals
+        st.session_state["approvals"] = approvals
+
+        # Apply fixes
+        if st.button("Apply Approved Fixes"):
+            modified_rules = st.session_state["rules_dict"]
+
+            for p in st.session_state["approvals"]:
+                seg, pos = p["segment"], p["position"]
+                sub_pos = p.get("sub_pos")
+                change = p["proposed_change"]
+
+                if sub_pos is None:  # ✅ field-level
+                    if "update_usage" in change:
+                        modified_rules[seg][pos]["usage"] = change["update_usage"]
+
+                    if change.get("empty_codes"):
+                        modified_rules[seg][pos]["accepted_codes"] = []
+
+                    if "update_codes" in change:
+                        modified_rules[seg][pos]["accepted_codes"] = change["update_codes"]
+
+                    if "add_code" in change:
+                        modified_rules[seg][pos].setdefault("accepted_codes", [])
+                        modified_rules[seg][pos]["accepted_codes"].append(change["add_code"])
+
+                else:  # ✅ subfield-level
+                    subfields = modified_rules[seg][pos].get("subfields", [])
+                    for sf in subfields:
+                        if sf["sub_pos"] == sub_pos:
+                            if "update_usage" in change:
+                                sf["usage"] = change["update_usage"]
+
+                            if change.get("empty_codes"):
+                                sf["accepted_codes"] = []
+
+                            if "update_codes" in change:
+                                sf["accepted_codes"] = change["update_codes"]
+
+                            if "add_code" in change:
+                                sf.setdefault("accepted_codes", [])
+                                sf["accepted_codes"].append(change["add_code"])
+
+            # Save new version
+            version_name = save_version(modified_rules)
+            st.success(f"✅ Saved healed rules as version {version_name}")
+            st.session_state["rules_dict"] = modified_rules
+            
+
+if heal_file:
+    valid_edi_text = heal_file.read().decode("utf-8")
+
+    if st.button("Generate Healing Suggestions"):
+        proposals = propose_fixes(
+            invalid_results,
+            valid_edi_text,
+            st.session_state["rules_dict"],
+            llm
+        )
 
         if proposals:
             st.write("### Proposed Fixes (approve to apply):")
