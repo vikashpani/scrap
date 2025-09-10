@@ -1,3 +1,43 @@
+from langchain.prompts import ChatPromptTemplate
+
+prompt = ChatPromptTemplate.from_template("""
+You are an EDI rules repair assistant.
+
+We have a base rules JSON, invalid validation results, and a valid EDI sample.
+
+Base Rules (do not change structure, only update usage or accepted codes where necessary):
+{rules_dict}
+
+Invalid Results (these fields failed validation):
+{invalid_results}
+
+Valid EDI (reference):
+{valid_edi_text}
+
+---
+
+### Task:
+Suggest **minimal modifications** to the rules so they become valid against the EDI.
+
+1. Only update the fields/segments/subfields that are invalid.
+2. Preserve the JSON structure (do not delete or add unrelated keys).
+3. If you suggest new accepted codes, use the following schema:
+   ```json
+   {
+     "segment": "...",
+     "position": "...",
+     "sub_position": "..." (optional, if the issue is in a subfield),
+     "proposed_change": {
+       "add_code": {"Code": "...", "Definition": "..."}
+     },
+     "reason": "..."
+   }
+
+
+
+
+
+
 import streamlit as st
 import json
 import os
