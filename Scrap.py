@@ -1,5 +1,108 @@
 
 import os
+import xml.etree.ElementTree as ET
+from collections import defaultdict
+
+def get_claim_type(st_impl):
+    """
+    Determine claim type from ST03 value
+    Institutional: contains 'X222' or '005010X222'
+    Professional: contains 'X223' or '005010X223'
+    """
+    if "X222" in st_impl or "005010X222" in st_impl:
+        return "institutional"
+    elif "X223" in st_impl or "005010X223" in st_impl:
+        return "professional"
+    else:
+        return "unknown"
+
+def merge_edi_roots(xml_roots, output_folder):
+    # Group roots by (trading_partner_id, claim_type)
+    grouped = defaultdict(list)
+
+    for root in xml_roots:
+        # Extract trading partner id (ISA06)
+        isa06 = root.find(".//ISA06").text if root.find(".//ISA06") is not None else "UNKNOWN"
+
+        # Extract ST03 to get claim type
+        st_elem = root.find(".//ST03")
+        st_impl = st_elem.text if st_elem is not None else ""
+        claim_type = get_claim_type(st_impl)
+
+        grouped[(isa06, claim_type)].append(root)
+
+    # Merge per group
+    for (partner_id, claim_type), roots in grouped.items():
+        if claim_type == "unknown":
+            continue  # skip unknowns
+
+        # Build merged EDI segments
+        merged_segments = []
+
+        # Take header from the first root
+        header_segments = []
+        footer_segments = []
+        body_segments = []
+
+        for idx, root in enumerate(roots):
+            segments = [elem.text for elem in root.findall(".//Segment")]
+            if not segments:
+                continue
+
+            # ISA..BHT header (keep only from first file)
+            if idx == 0:
+                header_segments = segments[:segments.index("BHT")+1]
+
+            # Footer (SE..IEA, keep only from last file)
+            if idx == len(roots) - 1:
+                footer_segments = segments[segments.index("SE"):]
+
+            # Body (everything between BHT and SE)
+            body_start = segments.index("BHT")+1
+            body_end = segments.index("SE")
+            body_segments.extend(segments[body_start:body_end])
+
+        merged_segments.extend(header_segments)
+        merged_segments.extend(body_segments)
+        merged_segments.extend(footer_segments)
+
+        # Write merged EDI file
+        output_filename = f"{claim_type}_{partner_id}_merged.DAT"
+        output_path = os.path.join(output_folder, output_filename)
+
+        with open(output_path, "w") as f:
+            f.write("~".join(merged_segments) + "~")
+
+        print(f"Created merged file: {output_filename}")
+
+
+# Example usage:
+if __name__ == "__main__":
+    # Example: parse all XML files from folder into roots
+    input_folder = "source_xmls"
+    output_folder = "merged_output"
+    os.makedirs(output_folder, exist_ok=True)
+
+    xml_roots = []
+    for filename in os.listdir(input_folder):
+        if filename.endswith(".xml"):
+            tree = ET.parse(os.path.join(input_folder, filename))
+            xml_roots.append(tree.getroot())
+
+    # Merge based on trading partner & claim type
+    merge_edi_roots(xml_roots, output_folder)
+
+
+
+
+
+
+
+
+
+
+
+import os
 import hashlib
 import xml.etree.ElementTree as ET
 from copy import deepcopy
