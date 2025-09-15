@@ -1,3 +1,105 @@
+
+import os
+
+def read_edi_file(filepath):
+    """Read an EDI file and return list of segments."""
+    with open(filepath, "r") as f:
+        content = f.read().strip()
+    segments = content.split("~")
+    segments = [seg.strip() for seg in segments if seg.strip()]
+    return segments
+
+def split_edi_parts(segments):
+    """Split EDI into header, claims, footer."""
+    # ISA/GS header
+    header = []
+    # GE/IEA footer
+    footer = []
+    # claim body (loops)
+    body = []
+
+    in_header = True
+    in_footer = False
+
+    for seg in segments:
+        seg_id = seg[:3]
+
+        if seg_id in ("GE", "IEA"):
+            in_footer = True
+
+        if in_header:
+            header.append(seg)
+            if seg_id == "ST":  # ST marks start of claim set
+                in_header = False
+        elif in_footer:
+            footer.append(seg)
+        else:
+            body.append(seg)
+
+    return header, body, footer
+
+
+def merge_edis(file1, file2, outputfile):
+    # Read both files
+    segs1 = read_edi_file(file1)
+    segs2 = read_edi_file(file2)
+
+    # Split header/body/footer
+    header1, body1, footer1 = split_edi_parts(segs1)
+    header2, body2, footer2 = split_edi_parts(segs2)
+
+    # For merging → keep header1 + combine claim bodies + footer1
+    merged_segments = header1 + body1 + body2 + footer1
+
+    # Update segment counts (GE, IEA, SE)
+    merged_segments = update_control_segments(merged_segments)
+
+    # Write output
+    with open(outputfile, "w") as f:
+        f.write("~".join(merged_segments) + "~")
+
+    print(f"✅ Merged EDI written to {outputfile}")
+
+
+def update_control_segments(segments):
+    """Fix counts in SE, GE, IEA segments after merging."""
+    new_segments = []
+    seg_count = 0
+    for seg in segments:
+        seg_id = seg[:3]
+        if seg_id == "SE":
+            parts = seg.split("*")
+            parts[1] = str(seg_count + 1)  # SE segment count
+            seg = "*".join(parts)
+        elif seg_id == "GE":
+            parts = seg.split("*")
+            parts[1] = "1"  # only one functional group
+            seg = "*".join(parts)
+        elif seg_id == "IEA":
+            parts = seg.split("*")
+            parts[1] = "1"  # only one interchange
+            seg = "*".join(parts)
+
+        new_segments.append(seg)
+        seg_count += 1
+
+    return new_segments
+
+
+if __name__ == "__main__":
+    file1 = "837_file1.edi"
+    file2 = "837_file2.edi"
+    outputfile = "837_merged.edi"
+
+    merge_edis(file1, file2, outputfile)
+
+
+
+
+
+
+
+
 import os
 import hashlib
 import xml.etree.ElementTree as ET
