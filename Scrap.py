@@ -1,3 +1,104 @@
+import os
+import xml.etree.ElementTree as ET
+from collections import defaultdict
+
+def get_claim_type(st_impl):
+    """
+    Determine claim type from ST03 value
+    """
+    if "X222" in st_impl or "005010X222" in st_impl:
+        return "institutional"
+    elif "X223" in st_impl or "005010X223" in st_impl:
+        return "professional"
+    else:
+        return "unknown"
+
+def extract_segments(root):
+    """Extract loops: ISA, GS, ST, Header, Body, Footer"""
+    isa_loop = [elem.text for elem in root.findall(".//ISA_loop//Segment")]
+    gs_loop = [elem.text for elem in root.findall(".//GS_loop//Segment")]
+    st_loop = [elem.text for elem in root.findall(".//ST_loop//Segment")]
+    header_loop = [elem.text for elem in root.findall(".//Header_loop//Segment")]
+    body = [elem.text for elem in root.findall(".//Header_loop//Body//Segment")]
+    footer = [elem.text for elem in root.findall(".//Footer_loop//Segment")]
+    return isa_loop, gs_loop, st_loop, header_loop, body, footer
+
+def merge_edi_roots(xml_roots, output_folder):
+    # Group by (ISA06, claim_type)
+    grouped = defaultdict(list)
+
+    for root in xml_roots:
+        # Trading partner id
+        isa06 = root.find(".//ISA06").text if root.find(".//ISA06") is not None else "UNKNOWN"
+        # Claim type
+        st_elem = root.find(".//ST03")
+        st_impl = st_elem.text if st_elem is not None else ""
+        claim_type = get_claim_type(st_impl)
+
+        grouped[(isa06, claim_type)].append(root)
+
+    # Process each group
+    for (partner_id, claim_type), roots in grouped.items():
+        if claim_type == "unknown":
+            continue
+
+        merged_segments = []
+        all_body_segments = []
+        footer_segments = []
+
+        for idx, root in enumerate(roots):
+            isa, gs, st, header, body, footer = extract_segments(root)
+
+            if idx == 0:
+                # Add header sections only once
+                merged_segments.extend(isa)
+                merged_segments.extend(gs)
+                merged_segments.extend(st)
+                merged_segments.extend(header)
+
+            # Always collect body
+            all_body_segments.extend(body)
+
+            if idx == len(roots) - 1:
+                # Footer only from last file
+                footer_segments = footer
+
+        # Final merged file content
+        merged_segments.extend(all_body_segments)
+        merged_segments.extend(footer_segments)
+
+        # Write out to file
+        output_filename = f"{claim_type}_{partner_id}_merged.DAT"
+        output_path = os.path.join(output_folder, output_filename)
+        with open(output_path, "w") as f:
+            f.write("~".join(merged_segments) + "~")
+
+        print(f"Created merged file: {output_filename}")
+
+
+# Example usage
+if __name__ == "__main__":
+    input_folder = "source_xmls"
+    output_folder = "merged_output"
+    os.makedirs(output_folder, exist_ok=True)
+
+    xml_roots = []
+    for filename in os.listdir(input_folder):
+        if filename.endswith(".xml"):
+            tree = ET.parse(os.path.join(input_folder, filename))
+            xml_roots.append(tree.getroot())
+
+    merge_edi_roots(xml_roots, output_folder)
+
+
+
+
+
+
+
+
+
+
 
 import os
 import xml.etree.ElementTree as ET
