@@ -3,6 +3,104 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 
 def get_claim_type(st_impl):
+    if "X222" in st_impl or "005010X222" in st_impl:
+        return "institutional"
+    elif "X223" in st_impl or "005010X223" in st_impl:
+        return "professional"
+    else:
+        return "unknown"
+
+def merge_edi_roots(xml_roots, output_folder):
+    grouped = defaultdict(list)
+
+    # Group by trading partner + claim type
+    for root in xml_roots:
+        isa06 = root.find(".//loop[@id='ISA_LOOP']/seg[@id='ISA']/ele[@id='ISA06']")
+        partner_id = isa06.text if isa06 is not None else "UNKNOWN"
+
+        st03 = root.find(".//loop[@id='ST_LOOP']/seg[@id='ST']/ele[@id='ST03']")
+        claim_type = get_claim_type(st03.text if st03 is not None else "")
+
+        grouped[(partner_id, claim_type)].append(root)
+
+    for (partner_id, claim_type), roots in grouped.items():
+        if claim_type == "unknown":
+            continue
+
+        # Create new merged root
+        first_root = roots[0]
+        isa_loop = ET.Element("loop", {"id": "ISA_LOOP"})
+
+        # Copy ISA segment from first
+        isa_seg = first_root.find(".//loop[@id='ISA_LOOP']/seg[@id='ISA']")
+        isa_loop.append(isa_seg)
+
+        # Create GS_LOOP
+        gs_loop = ET.SubElement(isa_loop, "loop", {"id": "GS_LOOP"})
+
+        # Copy GS and ST (with HEADER) from first
+        gs_seg = first_root.find(".//loop[@id='GS_LOOP']/seg[@id='GS']")
+        gs_loop.append(gs_seg)
+
+        st_loop = ET.SubElement(gs_loop, "loop", {"id": "ST_LOOP"})
+        st_seg = first_root.find(".//loop[@id='ST_LOOP']/seg[@id='ST']")
+        st_loop.append(st_seg)
+
+        header = first_root.find(".//loop[@id='ST_LOOP']/loop[@id='HEADER']")
+        if header is not None:
+            st_loop.append(header)
+
+        # Merge DETAIL loops from all roots
+        for root in roots:
+            for detail in root.findall(".//loop[@id='ST_LOOP']/loop[@id='DETAIL']"):
+                st_loop.append(detail)
+
+        # Take SE from last root
+        last_root = roots[-1]
+        se_seg = last_root.find(".//loop[@id='ST_LOOP']/seg[@id='SE']")
+        st_loop.append(se_seg)
+
+        # Add GE and IEA from last root
+        ge_seg = last_root.find(".//loop[@id='GS_LOOP']/seg[@id='GE']")
+        isa_loop.append(ge_seg)
+
+        iea_seg = last_root.find(".//seg[@id='IEA']")
+        isa_loop.append(iea_seg)
+
+        # --- Fix Counts ---
+        # Update SE01 (# of included segments in ST loop)
+        se01 = se_seg.find("./ele[@id='SE01']")
+        if se01 is not None:
+            total_segments = len(st_loop.findall(".//seg"))
+            se01.text = str(total_segments)
+
+        # Update GE01 (# of transaction sets included)
+        ge01 = ge_seg.find("./ele[@id='GE01']")
+        if ge01 is not None:
+            ge01.text = "1"
+
+        # Update IEA01 (# of functional groups)
+        iea01 = iea_seg.find("./ele[@id='IEA01']")
+        if iea01 is not None:
+            iea01.text = "1"
+
+        # --- Write merged file ---
+        output_filename = f"{claim_type}_{partner_id}_merged.DAT"
+        output_path = os.path.join(output_folder, output_filename)
+
+        with open(output_path, "wb") as f:
+            f.write(ET.tostring(isa_loop, encoding="utf-8"))
+
+        print(f"Created merged file: {output_filename}")
+
+
+
+
+import os
+import xml.etree.ElementTree as ET
+from collections import defaultdict
+
+def get_claim_type(st_impl):
     """
     Determine claim type from ST03 value
     """
