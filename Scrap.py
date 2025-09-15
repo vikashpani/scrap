@@ -1,5 +1,164 @@
 
 import os
+import hashlib
+import xml.etree.ElementTree as ET
+from copy import deepcopy
+
+# -------------------
+# Fingerprint Logic
+# -------------------
+def fingerprint_element(elem: ET.Element) -> str:
+    """Create deterministic fingerprint for claim loops to deduplicate."""
+    parts = []
+    for node in elem.iter():
+        if node.tag == 'seg':
+            segid = node.attrib.get('id', '')
+            ele_texts = [(ele.text or '').strip() for ele in node.findall('ele')]
+            parts.append(segid + "/" + "|".join(ele_texts))
+    return hashlib.sha256("||".join(parts).encode("utf-8")).hexdigest()
+
+# -------------------
+# Convert XML seg → EDI line
+# -------------------
+def parse_segment(seg: ET.Element) -> str:
+    seg_id = seg.attrib["id"]
+    element_dict = {}
+
+    for child in seg:
+        if child.tag == "ele":
+            idx_str = child.attrib.get("id", "").replace(seg_id, "")
+            if idx_str.isdigit():
+                element_dict[int(idx_str)] = child.text or ""
+
+        elif child.tag == "comp":
+            sub_values = []
+            for sub in child:
+                if sub.tag == "subele":
+                    sub_values.append(sub.text or "")
+            idx_str = sub.attrib.get("id", "").replace(seg_id, "")
+            if idx_str.isdigit():
+                element_dict[int(idx_str)] = ":".join(sub_values)
+
+    # preserve gaps
+    max_idx = max(element_dict.keys() or [0])
+    elements = [seg_id] + [element_dict.get(i, "") for i in range(1, max_idx + 1)]
+    return "*".join(elements) + "~"
+
+# -------------------
+# Fix Control Counts
+# -------------------
+def fix_control_counts(root: ET.Element):
+    """Fix SE, GE, IEA counts after merge."""
+    # SE01: number of segments between ST and SE (including both)
+    segments = [seg for seg in root.findall(".//seg")]
+    st_index = None
+    for i, seg in enumerate(segments):
+        if seg.attrib.get("id") == "ST":
+            st_index = i
+        elif seg.attrib.get("id") == "SE" and st_index is not None:
+            count = i - st_index + 1
+            se01 = seg.find("ele[@id='SE01']")
+            if se01 is not None:
+                se01.text = str(count)
+
+    # GE01 = number of STs
+    st_count = len(root.findall(".//seg[@id='ST']"))
+    for ge in root.findall(".//seg[@id='GE']"):
+        ge01 = ge.find("ele[@id='GE01']")
+        if ge01 is not None:
+            ge01.text = str(st_count)
+
+    # IEA01 = number of GSs
+    gs_count = len(root.findall(".//seg[@id='GS']"))
+    for iea in root.findall(".//seg[@id='IEA']"):
+        iea01 = iea.find("ele[@id='IEA01']")
+        if iea01 is not None:
+            iea01.text = str(gs_count)
+
+# -------------------
+# Extract Trading Partner + Claim Type
+# -------------------
+def extract_ids(root: ET.Element):
+    isa06 = None
+    st01 = None
+    for seg in root.findall(".//seg[@id='ISA']"):
+        elems = seg.findall("ele")
+        if len(elems) >= 6:
+            isa06 = (elems[5].text or "").strip()
+    for seg in root.findall(".//seg[@id='ST']"):
+        elems = seg.findall("ele")
+        if elems:
+            st01 = (elems[0].text or "").strip()
+    return isa06, st01
+
+# -------------------
+# Merge EDI XMLs
+# -------------------
+def merge_edis(xml_roots, output_file):
+    if not xml_roots:
+        raise ValueError("No EDI roots provided")
+
+    isa06_list, st01_list = [], []
+    for root in xml_roots:
+        isa06, st01 = extract_ids(root)
+        isa06_list.append(isa06)
+        st01_list.append(st01)
+
+    if len(set(isa06_list)) != 1 or len(set(st01_list)) != 1:
+        raise ValueError("Trading partner ISA06 or Claim type ST01 mismatch – cannot merge.")
+
+    merged_root = ET.Element("EDI837")
+    seen = set()
+
+    # Headers (take only from first)
+    first_root = xml_roots[0]
+    for seg in first_root.findall(".//seg[@id='ISA']") + \
+                first_root.findall(".//seg[@id='GS']") + \
+                first_root.findall(".//seg[@id='ST']") + \
+                first_root.findall(".//seg[@id='BHT']"):
+        merged_root.append(deepcopy(seg))
+
+    # Add body loops (deduplicated)
+    for root in xml_roots:
+        for loop in root.findall(".//loop[@id='2000A']") + \
+                    root.findall(".//loop[@id='2000B']") + \
+                    root.findall(".//loop[@id='2300']"):
+            fp = fingerprint_element(loop)
+            if fp in seen:
+                continue
+            seen.add(fp)
+            merged_root.append(deepcopy(loop))
+
+    # Footer (from first)
+    for seg in first_root.findall(".//seg[@id='SE']") + \
+                first_root.findall(".//seg[@id='GE']") + \
+                first_root.findall(".//seg[@id='IEA']"):
+        merged_root.append(deepcopy(seg))
+
+    # Fix control counters
+    fix_control_counts(merged_root)
+
+    # Convert back to EDI text
+    edi_lines = [parse_segment(seg) for seg in merged_root.findall(".//seg")]
+    edi_text = "\n".join(edi_lines)
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write(edi_text)
+
+    print(f"✅ Merged EDI written: {output_file}")
+    return edi_text
+
+
+
+
+
+
+
+
+
+
+
+import os
 
 def read_edi_file(filepath):
     """Read an EDI file and return list of segments."""
