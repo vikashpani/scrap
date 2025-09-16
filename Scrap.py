@@ -3,6 +3,168 @@
 import streamlit as st
 import pandas as pd
 import os
+from io import BytesIO
+from typing import List, Dict
+
+st.set_page_config(page_title="EDI Comparison (Config-Driven)", layout="wide")
+
+# -------------------
+# Utilities
+# -------------------
+
+def parse_edi(content: str, edi_type: str, mapping_df: pd.DataFrame) -> List[dict]:
+    """Generic EDI parser using mapping configuration."""
+    records = []
+    segments = content.split("~")
+    for seg in segments:
+        parts = seg.strip().split("*")
+        if not parts:
+            continue
+        # filter mapping rows for this EDI type + segment
+        for _, row in mapping_df[(mapping_df["SourceEDI"] == edi_type) & (mapping_df["Segment"] == parts[0])].iterrows():
+            val = ""
+            try:
+                if int(row["FieldPos"]) < len(parts):
+                    val = parts[int(row["FieldPos"])]
+                    if pd.notna(row["SubFieldPos"]):
+                        subs = val.split(":")
+                        if int(row["SubFieldPos"]) < len(subs):
+                            val = subs[int(row["SubFieldPos"])]
+            except Exception:
+                val = ""
+            records.append({
+                "FieldName": row["FieldName"],
+                "Value": val,
+                "Segment": row["Segment"]
+            })
+    return records
+
+
+def compare_records(source_records, target_records, mapping_df):
+    """Compare extracted records based on mapping config."""
+    results = []
+    for _, row in mapping_df.iterrows():
+        src_vals = [r["Value"] for r in source_records if r["FieldName"] == row["FieldName"]]
+        tgt_vals = [r["Value"] for r in target_records if r["FieldName"] == row["TargetFieldName"]]
+
+        src_val = ", ".join(src_vals) if src_vals else ""
+        tgt_val = ", ".join(tgt_vals) if tgt_vals else ""
+
+        status = "Match" if src_val == tgt_val else "Mismatch"
+
+        results.append({
+            "SourceField": row["FieldName"],
+            "SourceValue": src_val,
+            "TargetField": row["TargetFieldName"],
+            "TargetValue": tgt_val,
+            "Status": status
+        })
+    return results
+
+
+def save_excel(comparison_results, output_path="comparison_results.xlsx"):
+    """Save comparison results into Excel."""
+    df = pd.DataFrame(comparison_results)
+    with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="Comparison", index=False)
+    return output_path
+
+
+def get_template_excel() -> BytesIO:
+    """Generate a sample mapping Excel template."""
+    data = {
+        "SourceEDI": ["837I", "837I", "837I"],
+        "Segment": ["NM1", "NM1", "CLM"],
+        "FieldPos": [3, 4, 1],
+        "SubFieldPos": [None, None, None],
+        "FieldName": ["LastName", "FirstName", "ClaimID"],
+        "TargetEDI": ["820", "820", "820"],
+        "TargetSegment": ["NM1", "NM1", "RMR"],
+        "TargetFieldPos": [3, 4, 2],
+        "TargetSubPos": [None, None, None],
+        "TargetFieldName": ["LastName", "FirstName", "ClaimID"]
+    }
+    df = pd.DataFrame(data)
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="Mapping", index=False)
+    buffer.seek(0)
+    return buffer
+
+
+# -------------------
+# Streamlit UI
+# -------------------
+
+st.title("📊 Config-Driven EDI Comparison Tool")
+
+# Sidebar: Download template
+st.sidebar.header("📥 Download Template")
+template_buffer = get_template_excel()
+st.sidebar.download_button(
+    label="Download Mapping Template",
+    data=template_buffer,
+    file_name="edi_mapping_template.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+# Step 1: Upload mapping Excel
+mapping_file = st.file_uploader("Upload Mapping Excel", type=["xlsx"])
+
+if mapping_file:
+    mapping_df = pd.read_excel(mapping_file)
+    st.success("Mapping file loaded!")
+
+    required_cols = ["SourceEDI", "Segment", "FieldPos", "SubFieldPos", "FieldName",
+                     "TargetEDI", "TargetSegment", "TargetFieldPos", "TargetSubPos", "TargetFieldName"]
+    if not all(col in mapping_df.columns for col in required_cols):
+        st.error(f"Mapping file must contain columns: {required_cols}")
+    else:
+        # Step 2: Identify unique EDIs
+        source_edi = mapping_df["SourceEDI"].iloc[0]
+        target_edi = mapping_df["TargetEDI"].iloc[0]
+
+        st.subheader("Step 2: Upload EDI Files")
+
+        source_file = st.file_uploader(f"Upload {source_edi} File", type=["txt", "edi"])
+        target_file = st.file_uploader(f"Upload {target_edi} File", type=["txt", "edi"])
+
+        if source_file and target_file:
+            if st.button("Run Comparison"):
+                source_content = source_file.read().decode("utf-8")
+                target_content = target_file.read().decode("utf-8")
+
+                source_records = parse_edi(source_content, source_edi, mapping_df)
+                target_records = parse_edi(target_content, target_edi, mapping_df)
+
+                comparison_results = compare_records(source_records, target_records, mapping_df)
+
+                # Show in UI
+                df_results = pd.DataFrame(comparison_results)
+                st.dataframe(df_results)
+
+                # Save to Excel
+                output_path = save_excel(comparison_results)
+                with open(output_path, "rb") as f:
+                    st.download_button(
+                        label="📥 Download Comparison Report",
+                        data=f,
+                        file_name=os.path.basename(output_path),
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+
+
+
+
+
+
+
+
+
+# app.py
+import streamlit as st
+import pandas as pd
+import os
 from typing import List, Dict
 
 st.set_page_config(page_title="EDI Comparison (Config-Driven)", layout="wide")
