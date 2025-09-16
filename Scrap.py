@@ -1,3 +1,51 @@
+import os
+import pandas as pd
+import shutil
+
+# -------- Settings --------
+excel_file = "file_list.xlsx"       # Excel file containing file names
+column_name = "FileName"            # Column in Excel with file names
+search_folder = "D:/Data"           # Root folder to search in (can have subfolders)
+output_folder = "D:/CollectedFiles" # Where to copy collected files
+
+# Create output folder if not exists
+os.makedirs(output_folder, exist_ok=True)
+
+# Read Excel file
+df = pd.read_excel(excel_file)
+file_list = df[column_name].dropna().astype(str).tolist()
+
+# Walk through folder and find files
+found_files = []
+for root, _, files in os.walk(search_folder):
+    for f in files:
+        if f in file_list:  # exact match
+            source_path = os.path.join(root, f)
+            target_path = os.path.join(output_folder, f)
+            shutil.copy2(source_path, target_path)  # copy file
+            found_files.append(f)
+
+# Report
+missing_files = set(file_list) - set(found_files)
+
+print(f"✅ Collected {len(found_files)} files into {output_folder}")
+if missing_files:
+    print("⚠️ Missing files (not found):")
+    for mf in missing_files:
+        print(" -", mf)
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # app.py
 import streamlit as st
