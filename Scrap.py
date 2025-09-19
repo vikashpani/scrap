@@ -1,3 +1,37 @@
+import os
+import shutil
+
+def split_files_into_folders(source_dir, target_dir, batch_size=50):
+    os.makedirs(target_dir, exist_ok=True)
+
+    # Get all files from source directory
+    files = [f for f in os.listdir(source_dir) if os.path.isfile(os.path.join(source_dir, f))]
+    files.sort()  # optional: keeps them in order
+
+    folder_count = 1
+    for i in range(0, len(files), batch_size):
+        # Create subfolder
+        folder_name = os.path.join(target_dir, f"batch_{folder_count}")
+        os.makedirs(folder_name, exist_ok=True)
+
+        # Move files into subfolder
+        for f in files[i:i+batch_size]:
+            shutil.copy(os.path.join(source_dir, f), os.path.join(folder_name, f))
+
+        print(f"Created {folder_name} with {len(files[i:i+batch_size])} files")
+        folder_count += 1
+
+
+# Example usage
+source_dir = r"P:\CORE-Axiom Health EdgeSFTPTestFiles\Deloitte Parallel Testing\TRAVIS\Source_EDI"
+target_dir = r"P:\CORE-Axiom Health EdgeSFTPTestFiles\Deloitte Parallel Testing\TRAVIS\Split_EDI"
+split_files_into_folders(source_dir, target_dir, batch_size=50)
+
+
+
+
+
+
 # -------------------
 # Download Template
 # -------------------
