@@ -1,4 +1,153 @@
+# app.py
+import streamlit as st
+import pandas as pd
 import os
+
+st.set_page_config(page_title="Generic EDI Comparison", layout="wide")
+
+# -------------------
+# Utilities
+# -------------------
+
+def parse_edi(content: str, edi_type: str, mapping: pd.DataFrame) -> list[dict]:
+    """
+    Parse EDI content into records based on mapping Excel rows.
+    """
+    records = []
+    segments = content.split("~")
+
+    for idx, row in mapping[mapping["SourceEDI"] == edi_type].iterrows():
+        seg_name = row["SourceSegment"]
+        field_pos = int(row["SourceFieldPos"])
+        sub_pos = row.get("SourceSubFieldPos", None)
+
+        for seg in segments:
+            parts = seg.strip().split("*")
+            if not parts or parts[0] != seg_name:
+                continue
+
+            # get field
+            value = parts[field_pos] if field_pos < len(parts) else ""
+
+            # subfield extraction
+            if pd.notna(sub_pos) and ":" in value:
+                subs = value.split(":")
+                if int(sub_pos) < len(subs):
+                    value = subs[int(sub_pos)]
+
+            records.append({
+                "FieldName": row["SourceFieldName"],
+                "Value": value,
+                "RowID": idx  # link back to Excel row
+            })
+    return records
+
+
+def compare_files(source_txt, target_txt, mapping, source_edi, target_edi, filename):
+    """
+    Compare source vs target EDI based on mapping file.
+    Returns dataframe of differences and match status.
+    """
+    source_records = parse_edi(source_txt, source_edi, mapping)
+    target_records = parse_edi(target_txt, target_edi, mapping)
+
+    results = []
+    all_matched = True
+
+    for idx, row in mapping.iterrows():
+        # Source value
+        src_val = next((r["Value"] for r in source_records if r["RowID"] == idx), "")
+        tgt_val = next((r["Value"] for r in target_records if r["RowID"] == idx), "")
+
+        status = "Match" if src_val == tgt_val else "Mismatch"
+        if status == "Mismatch":
+            all_matched = False
+
+        results.append({
+            "File": filename,
+            "FieldName": row["SourceFieldName"],
+            "SourceValue": src_val,
+            "TargetValue": tgt_val,
+            "Status": status
+        })
+
+    return pd.DataFrame(results), all_matched
+
+
+def save_report(all_dfs: dict, output_file: str):
+    """Save comparison results to Excel"""
+    with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
+        for name, df in all_dfs.items():
+            df.to_excel(writer, sheet_name=name, index=False)
+    return output_file
+
+
+# -------------------
+# Streamlit UI
+# -------------------
+
+st.title("📑 Generic EDI Comparison Tool")
+
+with st.sidebar:
+    st.header("Configuration")
+    mapping_file = st.file_uploader("Upload Mapping Excel", type=["xlsx"])
+    run = st.button("Run Comparison")
+
+if mapping_file:
+    mapping = pd.read_excel(mapping_file)
+
+    # Get unique EDI types
+    source_edi = mapping["SourceEDI"].iloc[0]
+    target_edi = mapping["TargetEDI"].iloc[0]
+
+    st.write(f"🔹 Source EDI type: **{source_edi}**")
+    st.write(f"🔹 Target EDI type: **{target_edi}**")
+
+    files_source = st.file_uploader(f"Upload {source_edi} Files", type=["txt", "edi"], accept_multiple_files=True)
+    files_target = st.file_uploader(f"Upload {target_edi} Files", type=["txt", "edi"], accept_multiple_files=True)
+
+    if run and files_source and files_target:
+        all_results = {}
+        matched_files = []
+
+        for fs in files_source:
+            src_txt = fs.read().decode("utf-8", errors="ignore")
+
+            for ft in files_target:
+                tgt_txt = ft.read().decode("utf-8", errors="ignore")
+                df, all_matched = compare_files(src_txt, tgt_txt, mapping, source_edi, target_edi, fs.name)
+
+                all_results[f"{fs.name}_vs_{ft.name}"] = df
+
+                if all_matched:
+                    matched_files.append(fs.name)
+
+        # Show results
+        for name, df in all_results.items():
+            st.subheader(f"Results for {name}")
+            st.dataframe(df)
+
+        if matched_files:
+            st.success(f"✅ Perfect match found in: {', '.join(matched_files)}")
+
+        # Save report
+        output_file = "EDI_Comparison_Report.xlsx"
+        save_report(all_results, output_file)
+        with open(output_file, "rb") as f:
+            st.download_button("⬇️ Download Report", f, file_name=output_file)
+
+
+
+
+
+
+
+
+
+
+
+
+mport os
 import pandas as pd
 import shutil
 
