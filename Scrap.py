@@ -1,3 +1,72 @@
+# -------------------
+# Download Template
+# -------------------
+import io
+
+def create_template_excel():
+    template_df = pd.DataFrame([
+        {
+            "SourceEDI": "837",
+            "SourceSegment": "CLM",
+            "SourceFieldPos": 1,
+            "SourceSubFieldPos": "",
+            "SourceFieldName": "ClaimID",
+            "TargetEDI": "820",
+            "TargetSegment": "RMR",
+            "TargetFieldPos": 2,
+            "TargetSubFieldPos": "",
+            "TargetFieldName": "ClaimID"
+        },
+        {
+            "SourceEDI": "837",
+            "SourceSegment": "NM1",
+            "SourceFieldPos": 2,
+            "SourceSubFieldPos": "",
+            "SourceFieldName": "PatientName",
+            "TargetEDI": "820",
+            "TargetSegment": "NM1",
+            "TargetFieldPos": 2,
+            "TargetSubFieldPos": "",
+            "TargetFieldName": "PatientName"
+        },
+        {
+            "SourceEDI": "837",
+            "SourceSegment": "AMT",
+            "SourceFieldPos": 2,
+            "SourceSubFieldPos": "",
+            "SourceFieldName": "ClaimAmount",
+            "TargetEDI": "820",
+            "TargetSegment": "RMR",
+            "TargetFieldPos": 4,
+            "TargetSubFieldPos": "",
+            "TargetFieldName": "ClaimAmount"
+        }
+    ])
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        template_df.to_excel(writer, index=False, sheet_name="MappingTemplate")
+    output.seek(0)
+    return output
+
+
+with st.sidebar:
+    st.header("Configuration")
+    # Button to download Excel template
+    template_excel = create_template_excel()
+    st.download_button(
+        label="📥 Download Mapping Template",
+        data=template_excel,
+        file_name="EDI_Mapping_Template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+
+
+
+
+
+
 # app.py
 import streamlit as st
 import pandas as pd
