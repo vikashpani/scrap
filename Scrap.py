@@ -2,6 +2,73 @@ import os
 import pandas as pd
 
 # ---------- CONFIG ----------
+EXCEL_PATH = "input.xlsx"           # path to your Excel file
+INPUT_SOURCE_FOLDER = "source_files"  # folder where .txt files are stored
+OUTPUT_EXCEL = "output_with_status.xlsx"
+# -----------------------------
+
+
+def normalize_filename(fname: str) -> str:
+    """Ensure filenames always end with .txt"""
+    fname = str(fname).strip()
+    if not fname.lower().endswith(".txt"):
+        fname = fname + ".txt"
+    return fname
+
+
+def main():
+    # Load Excel
+    df = pd.read_excel(EXCEL_PATH, dtype=str).fillna("")
+
+    # Normalize filenames
+    df["claimfilename"] = df["claimfilename"].apply(normalize_filename)
+
+    # Cache file contents for faster lookup
+    file_cache = {}
+    for fname in set(df["claimfilename"]):
+        file_path = os.path.join(INPUT_SOURCE_FOLDER, fname)
+        if os.path.exists(file_path):
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                file_cache[fname] = f.read()
+        else:
+            file_cache[fname] = None  # file missing
+
+    # Check each row
+    statuses = []
+    for _, row in df.iterrows():
+        claim_file = row["claimfilename"]
+        patient_id = row["patientcontrolnumber"].strip()
+        amount = row["amount"].strip()
+
+        clm_key = f"CLM*{patient_id}*{amount}"
+
+        if file_cache[claim_file] is None:
+            statuses.append("File Not Found")
+        elif clm_key in file_cache[claim_file]:
+            statuses.append("Present")
+        else:
+            statuses.append("Missing")
+
+    # Add status column
+    df["status"] = statuses
+
+    # Save updated Excel
+    df.to_excel(OUTPUT_EXCEL, index=False)
+    print(f"✅ Status written to {OUTPUT_EXCEL}")
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+
+import os
+import pandas as pd
+
+# ---------- CONFIG ----------
 EXCEL_PATH = "input.xlsx"   # path to your Excel file
 INPUT_SOURCE_FOLDER = "source_files"  # folder where .txt files are stored
 OUTPUT_MISSED = "missed_files.txt"    # output report
