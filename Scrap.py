@@ -1,4 +1,73 @@
 import os
+import pandas as pd
+
+# ---------- CONFIG ----------
+EXCEL_PATH = "input.xlsx"   # path to your Excel file
+INPUT_SOURCE_FOLDER = "source_files"  # folder where .txt files are stored
+OUTPUT_MISSED = "missed_files.txt"    # output report
+
+# Define column names as in Excel
+PATIENT_COL = "patientcontrolnumber"
+AMOUNT_COL = "amount"
+FILE_COL = "claimfilename"  # filename column in Excel (AS101 / AS101.txt)
+# -----------------------------
+
+
+def normalize_filename(fname: str) -> str:
+    """Ensure filenames always end with .txt"""
+    fname = str(fname).strip()
+    if not fname.lower().endswith(".txt"):
+        fname = fname + ".txt"
+    return fname
+
+
+def main():
+    # Load Excel
+    df = pd.read_excel(EXCEL_PATH, dtype=str)
+    df = df.fillna("")
+
+    missed_files = []
+
+    for _, row in df.iterrows():
+        patient_id = row[PATIENT_COL].strip()
+        amount = row[AMOUNT_COL].strip()
+        claim_file = normalize_filename(row[FILE_COL])
+
+        file_path = os.path.join(INPUT_SOURCE_FOLDER, claim_file)
+
+        if not os.path.exists(file_path):
+            missed_files.append(f"{claim_file} (File not found)")
+            continue
+
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+
+            search_string = f"CLM*{patient_id}*{amount}"
+
+            if search_string not in content:
+                missed_files.append(f"{claim_file} (Missing {search_string})")
+
+        except Exception as e:
+            missed_files.append(f"{claim_file} (Error: {e})")
+
+    # Write results
+    with open(OUTPUT_MISSED, "w") as f:
+        if missed_files:
+            f.write("\n".join(missed_files))
+        else:
+            f.write("All records found. ✅")
+
+    print(f"Check complete. Results saved in {OUTPUT_MISSED}")
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+import os
 import shutil
 
 def split_files_into_folders(source_dir, target_dir, batch_size=50):
