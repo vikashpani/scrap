@@ -2,6 +2,61 @@ import os
 import pandas as pd
 
 # ---------- CONFIG ----------
+EXCEL_PATH = "input.xlsx"            # input excel
+INPUT_SOURCE_FOLDER = "source_files" # folder with .txt files
+OUTPUT_EXCEL = "output_with_status.xlsx"
+# -----------------------------
+
+
+def load_all_files(folder):
+    """Read all .txt files and return combined text content."""
+    file_contents = []
+    for fname in os.listdir(folder):
+        if fname.lower().endswith(".txt"):
+            try:
+                with open(os.path.join(folder, fname), "r", encoding="utf-8", errors="ignore") as f:
+                    file_contents.append(f.read())
+            except Exception as e:
+                print(f"⚠️ Could not read {fname}: {e}")
+    return " ".join(file_contents)  # merge all into one big string
+
+
+def main():
+    # Load Excel
+    df = pd.read_excel(EXCEL_PATH, dtype=str).fillna("")
+
+    # Build claim keys
+    df["clm_key"] = df.apply(
+        lambda r: f"CLM*{r['patientcontrolnumber'].strip()}*{r['amount'].strip()}",
+        axis=1
+    )
+
+    # Read all files once
+    all_content = load_all_files(INPUT_SOURCE_FOLDER)
+
+    # Check presence
+    df["status"] = df["clm_key"].apply(lambda key: "Present" if key in all_content else "Missing")
+
+    # Save output
+    df.to_excel(OUTPUT_EXCEL, index=False)
+    print(f"✅ Results written to {OUTPUT_EXCEL}")
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+
+
+
+
+import os
+import pandas as pd
+
+# ---------- CONFIG ----------
 EXCEL_PATH = "input.xlsx"           # path to your Excel file
 INPUT_SOURCE_FOLDER = "source_files"  # folder where .txt files are stored
 OUTPUT_EXCEL = "output_with_status.xlsx"
