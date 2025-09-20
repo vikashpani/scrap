@@ -9,6 +9,87 @@ OUTPUT_MISSED = "missed_files.txt"    # output report
 # Define column names as in Excel
 PATIENT_COL = "patientcontrolnumber"
 AMOUNT_COL = "amount"
+FILE_COL = "claimfilename"  # filename column in Excel (AS101 or AS101.txt)
+# -----------------------------
+
+
+def normalize_filename(fname: str) -> str:
+    """Ensure filenames always end with .txt"""
+    fname = str(fname).strip()
+    if not fname.lower().endswith(".txt"):
+        fname = fname + ".txt"
+    return fname
+
+
+def main():
+    # Load Excel
+    df = pd.read_excel(EXCEL_PATH, dtype=str).fillna("")
+
+    # Group by filename → list of CLM keys
+    claims_by_file = {}
+    for _, row in df.iterrows():
+        claim_file = normalize_filename(row[FILE_COL])
+        patient_id = row[PATIENT_COL].strip()
+        amount = row[AMOUNT_COL].strip()
+
+        clm_key = f"CLM*{patient_id}*{amount}"
+        claims_by_file.setdefault(claim_file, []).append(clm_key)
+
+    missed_report = []
+
+    for claim_file, claim_keys in claims_by_file.items():
+        file_path = os.path.join(INPUT_SOURCE_FOLDER, claim_file)
+
+        if not os.path.exists(file_path):
+            missed_report.append(f"{claim_file} → File not found")
+            continue
+
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+
+            # Check all claim keys
+            missing = [key for key in claim_keys if key not in content]
+
+            if missing:
+                missed_report.append(
+                    f"{claim_file} → Missing {len(missing)}/{len(claim_keys)} claims\n  "
+                    + "\n  ".join(missing)
+                )
+
+        except Exception as e:
+            missed_report.append(f"{claim_file} → Error: {e}")
+
+    # Write results
+    with open(OUTPUT_MISSED, "w") as f:
+        if missed_report:
+            f.write("\n".join(missed_report))
+        else:
+            f.write("All claims found ✅")
+
+    print(f"Check complete. Results saved in {OUTPUT_MISSED}")
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+
+
+import os
+import pandas as pd
+
+# ---------- CONFIG ----------
+EXCEL_PATH = "input.xlsx"   # path to your Excel file
+INPUT_SOURCE_FOLDER = "source_files"  # folder where .txt files are stored
+OUTPUT_MISSED = "missed_files.txt"    # output report
+
+# Define column names as in Excel
+PATIENT_COL = "patientcontrolnumber"
+AMOUNT_COL = "amount"
 FILE_COL = "claimfilename"  # filename column in Excel (AS101 / AS101.txt)
 # -----------------------------
 
