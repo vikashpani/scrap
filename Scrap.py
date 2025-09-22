@@ -1,5 +1,94 @@
 
 import os
+import json
+import streamlit as st
+import pandas as pd
+import xml.etree.ElementTree as ET
+
+# -------------------------------
+# Helpers
+# -------------------------------
+def get_column_name(seg_id, pos, rule_dict):
+    """Get human-friendly column name from rule_dict, fallback to seg+pos"""
+    if seg_id in rule_dict and pos in rule_dict[seg_id]:
+        return f"{seg_id}{pos} ({rule_dict[seg_id][pos].get('description','')})"
+    return f"{seg_id}{pos}"
+
+def xml_to_flat_row(xml_obj, rule_dict):
+    """Convert XML into one flat row dictionary"""
+    row = {}
+    for seg in xml_obj.findall(".//seg"):
+        seg_id = seg.attrib.get("id", "")
+        for idx, ele in enumerate(seg.findall("ele"), start=1):
+            pos = f"{idx:02d}"
+            col_name = get_column_name(seg_id, pos, rule_dict)
+            row[col_name] = ele.text or ""
+
+            # Handle subfields
+            if seg_id in rule_dict and pos in rule_dict[seg_id]:
+                subfields = rule_dict[seg_id][pos].get("subfields", [])
+                if subfields and ele.text:
+                    parts = ele.text.split(":")
+                    for i, sub in enumerate(subfields):
+                        sub_col = sub.get("description", f"{seg_id}{pos}-{i+1}")
+                        key = f"{seg_id}{pos}-{i+1} ({sub_col})"
+                        row[key] = parts[i] if i < len(parts) else ""
+    return row
+
+# -------------------------------
+# Streamlit UI
+# -------------------------------
+st.set_page_config(page_title="EDI Validator & Converter", layout="wide")
+st.title("📑 EDI Validator & Converter")
+
+# Upload JSON rules
+rule_file = st.file_uploader("Upload rule_dict.json", type=["json"])
+if rule_file:
+    rule_dict = json.load(rule_file)
+    st.success("✅ Rule dictionary loaded")
+else:
+    st.stop()
+
+# Upload EDI XML file
+uploaded_file = st.file_uploader("Upload EDI XML file", type=["xml"])
+if uploaded_file:
+    try:
+        xml_obj = ET.parse(uploaded_file)
+        st.success("✅ XML loaded")
+    except Exception as e:
+        st.error(f"❌ Error parsing XML: {e}")
+        st.stop()
+
+    # Convert XML → flat row
+    row_dict = xml_to_flat_row(xml_obj, rule_dict)
+    df = pd.DataFrame([row_dict])  # one row
+
+    st.subheader("📋 Extracted Data (one row per transaction)")
+    st.dataframe(df)
+
+    # Save Excel
+    out_path = "edi_output_flat.xlsx"
+    df.to_excel(out_path, index=False)
+
+    with open(out_path, "rb") as f:
+        st.download_button(
+            label="📥 Download Excel",
+            data=f,
+            file_name="edi_output_flat.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+
+
+
+
+
+
+
+
+
+
+import os
 import sys
 import json
 import streamlit as st
