@@ -1,3 +1,75 @@
+# app.py
+import os
+import streamlit as st
+
+# Import your helper functions
+from friday_helpers import (
+    load_file_as_xml_obj,
+    is_valid_x12,
+    change_file_into_segment_list
+)
+
+st.set_page_config(page_title="EDI File Validator", layout="wide")
+
+st.title("📑 EDI File Validator")
+
+# -------------------
+# File uploader
+# -------------------
+uploaded_files = st.file_uploader(
+    "Upload one or more EDI (.DAT) files", 
+    type=["dat"], 
+    accept_multiple_files=True
+)
+
+# -------------------
+# Run validation
+# -------------------
+if uploaded_files:
+    st.write("### Validation Results")
+
+    for uploaded_file in uploaded_files:
+        filename = uploaded_file.name
+        filepath = os.path.join("temp", filename)
+
+        # Ensure temp folder exists
+        os.makedirs("temp", exist_ok=True)
+
+        # Save uploaded file locally
+        with open(filepath, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+
+        # Convert to segment list
+        try:
+            edi_segments = change_file_into_segment_list(filepath)
+        except Exception as e:
+            st.error(f"❌ {filename} - Failed to parse: {e}")
+            continue
+
+        # Validate
+        try:
+            result = is_valid_x12(filename, edi_segments, "temp")
+        except Exception as e:
+            st.error(f"❌ {filename} - Exception during validation: {e}")
+            continue
+
+        # Show results
+        if result is True:
+            st.success(f"✅ {filename} - Valid EDI")
+        else:
+            st.error(f"❌ {filename} - Invalid EDI")
+            if isinstance(result, (str, list, dict)):
+                st.json(result) if isinstance(result, (dict, list)) else st.text(result)
+
+    st.info("Validation Check Done ✅")
+
+
+
+
+
+
+
+
 import os
 import xml.etree.ElementTree as ET
 from datetime import datetime
