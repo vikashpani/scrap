@@ -145,6 +145,147 @@ import streamlit as st
 import pandas as pd
 import xml.etree.ElementTree as ET
 
+# Assume these helper functions exist from your imports
+# from friday_helpers import change_file_into_segment_list, is_valid_x12
+
+# -------------------------------
+# Helpers
+# -------------------------------
+def get_column_name(seg_id, pos, rule_dict):
+    """Get human-friendly column name from rule_dict, fallback to seg+pos"""
+    if seg_id in rule_dict and pos in rule_dict[seg_id]:
+        return f"{seg_id}{pos} ({rule_dict[seg_id][pos].get('description','')})"
+    return f"{seg_id}{pos}"
+
+def xml_to_flat_row(xml_obj, rule_dict):
+    """Convert XML into one flat row dictionary"""
+    row = {}
+    for seg in xml_obj.findall(".//seg"):
+        seg_id = seg.attrib.get("id", "")
+        for idx, ele in enumerate(seg.findall("ele"), start=1):
+            pos = f"{idx:02d}"
+            col_name = get_column_name(seg_id, pos, rule_dict)
+            row[col_name] = ele.text or ""
+
+            # Handle subfields
+            if seg_id in rule_dict and pos in rule_dict[seg_id]:
+                subfields = rule_dict[seg_id][pos].get("subfields", [])
+                if subfields and ele.text:
+                    parts = ele.text.split(":")
+                    for i, sub in enumerate(subfields):
+                        sub_col = sub.get("description", f"{seg_id}{pos}-{i+1}")
+                        key = f"{seg_id}{pos}-{i+1} ({sub_col})"
+                        row[key] = parts[i] if i < len(parts) else ""
+    return row
+
+# -------------------------------
+# Streamlit UI
+# -------------------------------
+st.set_page_config(page_title="EDI Validator & Converter", layout="wide")
+st.title("📑 EDI Validator & Converter")
+
+# Upload rule_dict.json
+rule_file = st.file_uploader("Upload rule_dict.json", type=["json"])
+if not rule_file:
+    st.stop()
+
+rule_dict = json.load(rule_file)
+st.success("✅ Rule dictionary loaded")
+
+# Upload multiple EDI XML files
+uploaded_files = st.file_uploader("Upload EDI XML/DAT files", type=["xml", "DAT"], accept_multiple_files=True)
+if not uploaded_files:
+    st.stop()
+
+st.write("# 📋 Validation Results")
+
+# Temporary folder to store uploaded files
+os.makedirs("temp", exist_ok=True)
+
+results = []
+
+for uploaded_file in uploaded_files:
+    filename = uploaded_file.name
+    filepath = os.path.join("temp", filename)
+
+    # Save uploaded file locally
+    with open(filepath, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+
+    # Convert file to segment list
+    try:
+        edi_segments = change_file_into_segment_list(filepath)
+    except Exception as e:
+        st.error(f"❌ Failed to parse {filename}: {e}")
+        results.append({"file": filename, "valid": False})
+        continue
+
+    # Validate
+    try:
+        is_valid = is_valid_x12(filename, edi_segments, "temp")
+        if is_valid:
+            st.success(f"✅ {filename} is valid")
+            results.append({"file": filename, "valid": True})
+        else:
+            st.error(f"❌ {filename} is invalid")
+            results.append({"file": filename, "valid": False})
+    except Exception as e:
+        st.error(f"❌ {filename} Exception during validation: {e}")
+        results.append({"file": filename, "valid": False})
+        continue
+
+# Display validation summary
+st.subheader("Validation Summary")
+st.dataframe(pd.DataFrame(results))
+
+# -------------------------------
+# Convert valid files to Excel
+# -------------------------------
+for uploaded_file in uploaded_files:
+    filename = uploaded_file.name
+    filepath = os.path.join("temp", filename)
+
+    # Only process valid files
+    if not any(r["file"] == filename and r["valid"] for r in results):
+        continue
+
+    try:
+        xml_obj = ET.parse(filepath)
+        row_dict = xml_to_flat_row(xml_obj, rule_dict)
+        df = pd.DataFrame([row_dict])
+
+        st.subheader(f"📄 Extracted Data from {filename}")
+        st.dataframe(df)
+
+        # Save Excel for download
+        excel_out = f"{os.path.splitext(filename)[0]}_flat.xlsx"
+        df.to_excel(excel_out, index=False)
+
+        with open(excel_out, "rb") as f:
+            st.download_button(
+                label=f"📥 Download Excel ({filename})",
+                data=f,
+                file_name=excel_out,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+    except Exception as e:
+        st.error(f"❌ Error converting {filename} to Excel: {e}")
+
+
+
+
+
+
+
+
+
+import os
+import json
+import streamlit as st
+import pandas as pd
+import xml.etree.ElementTree as ET
+
 # -------------------------------
 # Helpers
 # -------------------------------
