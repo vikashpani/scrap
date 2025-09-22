@@ -1,3 +1,135 @@
+
+import os
+import sys
+import json
+import streamlit as st
+import pandas as pd
+
+# -------------------------------
+# Import your helper functions
+# -------------------------------
+# Assume your project structure is:
+#   /friday_helpers/
+#       __init__.py
+#       helpers.py
+#   /app.py   <-- this file
+
+# Adjust Python path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from friday_helpers import (
+    load_file_as_xml_obj,
+    is_valid_x12,
+    change_file_into_segment_list,
+)
+
+# -------------------------------
+# Helper: Load rule_dict.json
+# -------------------------------
+def load_rule_dict(json_file):
+    with open(json_file, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+# -------------------------------
+# Helper: Get description for segment/element
+# -------------------------------
+def get_column_name(seg_id, ele_pos, rule_dict):
+    """
+    Return friendly column name if found in rule_dict, else fallback SEGxx
+    """
+    if seg_id in rule_dict:
+        if ele_pos in rule_dict[seg_id]:
+            desc = rule_dict[seg_id][ele_pos].get("description")
+            if desc:
+                return f"{desc} ({seg_id}{ele_pos})"
+    return f"{seg_id}{ele_pos}"
+
+# -------------------------------
+# Convert XML object -> DataFrame
+# -------------------------------
+def xml_to_dataframe(xml_obj, rule_dict):
+    rows = []
+
+    for seg in xml_obj.findall(".//seg"):
+        seg_id = seg.attrib.get("id", "")
+        row = {"SegmentID": seg_id}
+
+        for idx, ele in enumerate(seg.findall("ele"), start=1):
+            pos = f"{idx:02d}"  # "01", "02", ...
+            col_name = get_column_name(seg_id, pos, rule_dict)
+            row[col_name] = ele.text or ""
+
+            # If subfields exist in rule_dict, split and map them
+            if seg_id in rule_dict and pos in rule_dict[seg_id]:
+                subfields = rule_dict[seg_id][pos].get("subfields", [])
+                if subfields and ele.text:
+                    parts = ele.text.split(":")
+                    for i, sub in enumerate(subfields):
+                        sub_col = sub.get("description", f"{seg_id}{pos}-{i+1}")
+                        key = f"{sub_col} ({seg_id}{pos}-{i+1})"
+                        row[key] = parts[i] if i < len(parts) else ""
+
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+# -------------------------------
+# Streamlit UI
+# -------------------------------
+st.set_page_config(page_title="EDI Validator & XML→Excel", layout="wide")
+st.title("📑 EDI Validator & Converter")
+
+uploaded_file = st.file_uploader("Upload EDI .DAT file", type=["dat", "DAT"])
+rule_file = st.file_uploader("Upload rule_dict.json", type=["json"])
+
+if uploaded_file and rule_file:
+    # Save temp files
+    tmp_path = os.path.join("tmp_input.dat")
+    with open(tmp_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+
+    # Convert file → segments
+    edi_segments = change_file_into_segment_list(tmp_path)
+
+    # Run validation
+    is_valid = is_valid_x12(uploaded_file.name, edi_segments, os.getcwd())
+
+    if not is_valid:
+        st.error("❌ File is not valid X12 EDI")
+    else:
+        st.success("✅ File is valid X12 EDI")
+
+        # Load XML object
+        try:
+            xml_obj = load_file_as_xml_obj(tmp_path)
+        except Exception as e:
+            st.error(f"XML Parse error: {e}")
+            st.stop()
+
+        # Load rule dict
+        rule_dict = json.load(rule_file)
+
+        # Convert XML → DataFrame
+        df = xml_to_dataframe(xml_obj, rule_dict)
+
+        st.dataframe(df.head(50))
+
+        # Download Excel
+        out_path = "edi_output.xlsx"
+        df.to_excel(out_path, index=False)
+
+        with open(out_path, "rb") as f:
+            st.download_button(
+                label="📥 Download Excel",
+                data=f,
+                file_name="edi_output.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+
+
+
+
 # app.py
 import os
 import streamlit as st
