@@ -1,4 +1,145 @@
 import os
+import xml.etree.ElementTree as ET
+from datetime import datetime
+from collections import defaultdict
+
+BATCH_SIZE = 50  # claims per file
+
+# -------------------------
+# Utility: turn <seg> into EDI text
+# -------------------------
+def seg_to_edi_text(seg):
+    """Convert <seg> element into raw EDI line"""
+    if seg is None:
+        return ""
+    tag_id = seg.attrib.get("id", "")
+    elems = []
+    for e in seg.findall("elem"):
+        elems.append(e.text if e.text else "")
+    return tag_id + "*" + "*".join(elems) + "~"
+
+# -------------------------
+# Claim collection
+# -------------------------
+def collect_claims(xml_file):
+    """Parse XML, collect all 2000B claims with partner and parent ST_LOOP"""
+    tree = ET.parse(xml_file)
+    root = tree.getroot()
+
+    claims_by_partner = defaultdict(list)
+
+    # each ST_LOOP holds an ISA->GS->ST grouping
+    for st_loop in root.findall(".//loop[@id='ST_LOOP']"):
+        # Get envelope info
+        st03 = st_loop.find("./seg[@id='ST']/elem[3]").text.strip()
+        isa06 = st_loop.find(".//seg[@id='ISA']/elem[6]").text.strip()
+
+        # find all subscriber loops (2000A)
+        for sub_loop in st_loop.findall("./loop[@id='2000A']"):
+            # find patient loops (2000B)
+            for pat_loop in sub_loop.findall("./loop[@id='2000B']"):
+                # store patient loop + subscriber loop + parent ST_LOOP reference
+                claims_by_partner[(st03, isa06)].append(
+                    (sub_loop, pat_loop, st_loop)
+                )
+
+    return claims_by_partner
+
+# -------------------------
+# File writer
+# -------------------------
+def write_dat_files(claims_by_partner_map, out_dir):
+    """Write .DAT batches preserving ISA/GS/ST + header loop + SE/GE/IEA"""
+    today = datetime.now().strftime("%m%d%Y")
+
+    for (claim_type, isa06), claims in claims_by_partner_map.items():
+        if not claims:
+            continue
+
+        # Process in chunks
+        for batch_idx in range(0, len(claims), BATCH_SIZE):
+            batch = claims[batch_idx: batch_idx + BATCH_SIZE]
+            first_sub, first_pat, st_loop = batch[0]  # use first claim’s ST_LOOP
+
+            # Envelope segments
+            isa_seg = st_loop.find(".//seg[@id='ISA']")
+            gs_seg = st_loop.find(".//seg[@id='GS']")
+            st_seg = st_loop.find("./seg[@id='ST']")
+            se_seg = st_loop.find("./seg[@id='SE']")
+            ge_seg = st_loop.find(".//seg[@id='GE']")
+            iea_seg = st_loop.find(".//seg[@id='IEA']")
+
+            # Collect HEADER (between ST and first 2000A)
+            header_parts = []
+            for child in st_loop:
+                if child.tag == "loop" and child.attrib.get("id") == "2000A":
+                    break
+                if child.tag == "seg":
+                    header_parts.append(seg_to_edi_text(child))
+                elif child.tag == "loop":
+                    for seg in child.findall(".//seg"):
+                        header_parts.append(seg_to_edi_text(seg))
+
+            # Build lines
+            lines = [
+                seg_to_edi_text(isa_seg),
+                seg_to_edi_text(gs_seg),
+                seg_to_edi_text(st_seg),
+            ]
+            lines.extend(header_parts)
+
+            # Add claims
+            for sub_loop, pat_loop, _ in batch:
+                for seg in sub_loop.findall("./seg"):
+                    lines.append(seg_to_edi_text(seg))
+                for seg in pat_loop.findall("./seg"):
+                    lines.append(seg_to_edi_text(seg))
+
+            # Close out
+            lines += [
+                seg_to_edi_text(se_seg),
+                seg_to_edi_text(ge_seg),
+                seg_to_edi_text(iea_seg),
+            ]
+
+            # File name
+            fname = f"{claim_type}_{isa06}_Batch{batch_idx//BATCH_SIZE + 1}_{today}.DAT"
+            outpath = os.path.join(out_dir, fname)
+
+            # Write
+            with open(outpath, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+
+            print(f"Wrote {len(batch)} claims -> {outpath}")
+
+# -------------------------
+# Main
+# -------------------------
+if __name__ == "__main__":
+    input_xml = "input.xml"   # your source XML
+    out_dir = "out"
+    os.makedirs(out_dir, exist_ok=True)
+
+    claims_map = collect_claims(input_xml)
+    write_dat_files(claims_map, out_dir)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import os
 import pandas as pd
 
 # ---------- CONFIG ----------
