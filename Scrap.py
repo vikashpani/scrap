@@ -1,3 +1,64 @@
+import streamlit as st
+from langchain.chat_models import AzureChatOpenAI
+from langchain.prompts import ChatPromptTemplate
+from langchain.memory import ConversationBufferMemory
+import os
+
+# ---- Azure OpenAI setup ----
+llm = AzureChatOpenAI(
+    deployment_name="your-deployment",
+    openai_api_key=os.getenv("AZURE_OPENAI_KEY"),
+    openai_api_base=os.getenv("AZURE_OPENAI_ENDPOINT"),
+    openai_api_version="2023-05-15",
+    temperature=0
+)
+
+memory = ConversationBufferMemory(return_messages=True)
+
+st.title("EDI AI Editor")
+
+uploaded_file = st.file_uploader("Upload EDI file", type=["edi","txt"])
+if uploaded_file:
+    edi_content = uploaded_file.read().decode("utf-8")
+    st.text_area("EDI Preview", edi_content, height=200)
+
+    if "edi_data" not in st.session_state:
+        st.session_state.edi_data = edi_content
+
+    query = st.text_input("Enter your edit request (e.g. 'Change service line date')")
+    if query:
+        prompt = ChatPromptTemplate.from_template("""
+        You are an EDI expert. 
+        Current EDI:
+        {edi}
+
+        User request: {query}
+
+        - Identify correct segment(s).
+        - Modify only what is necessary.
+        - Return the updated EDI.
+        - Also summarize what was changed.
+        """)
+
+        chain = prompt | llm
+        result = chain.invoke({"edi": st.session_state.edi_data, "query": query})
+
+        st.session_state.edi_data = result.content  # update stored EDI
+        st.subheader("✅ Change Summary")
+        st.write(result.content[:500])  # show summary & partial result
+
+    if st.button("Generate Final EDI"):
+        st.download_button("Download Updated EDI", st.session_state.edi_data, file_name="updated.edi")
+
+
+
+
+
+
+
+
+
+
 import os
 import json
 import streamlit as st
