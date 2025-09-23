@@ -1,3 +1,443 @@
+"""
+edi_agent.py
+
+Requirements:
+- pip install langchain openai pyx12  (pyx12 optional but recommended)
+- Set env vars: AZURE_OPENAI_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT
+"""
+
+import os
+import json
+import io
+import logging
+from typing import List, Tuple, Dict, Any, Optional
+from copy import deepcopy
+
+# LangChain / Azure OpenAI
+from langchain.chat_models import AzureChatOpenAI
+from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
+
+# --- Utility helpers ---
+
+
+def find_nth_occurrence(string: str, substring: str, n: int) -> int:
+    """
+    Return index (0-based) of nth occurrence of substring in string. -1 if not found.
+    """
+    if n <= 0:
+        return -1
+    start = 0
+    for i in range(n):
+        idx = string.find(substring, start)
+        if idx == -1:
+            return -1
+        start = idx + 1
+    return idx
+
+
+def detect_separators(edi_text: str) -> Tuple[str, str]:
+    """
+    Return (segment_terminator, element_separator). Common defaults are '~' and '*'.
+    Try to detect from ISA/GS if possible.
+    """
+    # Very simple heuristics:
+    if '~' in edi_text:
+        seg = '~'
+    elif '\n' in edi_text:
+        seg = '\n'
+    else:
+        seg = '~'
+    if '*' in edi_text:
+        elem = '*'
+    elif '|' in edi_text:
+        elem = '|'
+    else:
+        elem = '*'
+    return seg, elem
+
+
+def split_segments(edi_text: str, seg_term: str) -> List[str]:
+    # Keep trailing separators trimmed
+    segments = [s.strip() for s in edi_text.split(seg_term) if s.strip()]
+    return segments
+
+
+def join_segments(segments: List[str], seg_term: str) -> str:
+    return seg_term.join(segments) + seg_term
+
+
+def apply_edits(edi_text: str, edits: List[Dict[str, Any]]) -> Tuple[str, List[str]]:
+    """
+    Apply a list of edits to the edi_text.
+
+    Each edit item should be structured:
+    {
+      "segment": "DTP",
+      "occurrence": 1,      # optional (1-based). If omitted or null -> apply to all occurrences
+      "field_pos": 3,       # 1-based (1 = first element after segment tag)
+      "subfield_pos": null, # optional, 1-based for component/subfield
+      "match": { "old_value": "20240101" },  # optional condition: only replace where match holds
+      "new_value": "20250101"
+    }
+
+    Returns (new_text, applied_descriptions) where applied_descriptions are human readable lines of what changed.
+    """
+    seg_term, elem = detect_separators(edi_text)
+    segments = split_segments(edi_text, seg_term)
+    applied = []
+    new_segments = deepcopy(segments)
+
+    for edit in edits:
+        seg_tag = edit.get("segment")
+        occ = edit.get("occurrence")  # 1-based
+        field_pos = edit.get("field_pos")  # 1-based
+        subfield_pos = edit.get("subfield_pos")
+        new_value = edit.get("new_value")
+        match = edit.get("match")
+
+        # iterate each segment and apply edit where appropriate
+        count = 0
+        for idx, seg in enumerate(new_segments):
+            if not seg:
+                continue
+            parts = seg.split(elem)
+            if parts[0].upper() != seg_tag.upper():
+                continue
+            count += 1
+            if occ and occurrence_mismatch := (count != int(occ)):
+                continue
+
+            # field index in parts: parts[1] is first field after tag
+            if not field_pos or field_pos < 1:
+                # if field_pos missing, we cannot apply reliably
+                continue
+            arr_idx = int(field_pos)  # 1-based
+            parts_len = len(parts) - 1
+            if arr_idx > parts_len:
+                # extend with empty fields if necessary
+                parts.extend([''] * (arr_idx - parts_len))
+
+            # check match condition if exists
+            apply_here = True
+            if match:
+                if match.get("old_value") is not None:
+                    existing_val = parts[arr_idx]
+                    if existing_val != match.get("old_value"):
+                        apply_here = False
+
+            if apply_here:
+                old = parts[arr_idx]
+                # handle subfield/component splitting if requested (component sep usually ':')
+                if subfield_pos:
+                    comp_sep = ':'
+                    comps = old.split(comp_sep) if old is not None else ['']
+                    sf_idx = int(subfield_pos) - 1
+                    if sf_idx >= len(comps):
+                        comps.extend([''] * (sf_idx - len(comps) + 1))
+                    comps[sf_idx] = new_value
+                    parts[arr_idx] = comp_sep.join(comps)
+                else:
+                    parts[arr_idx] = new_value
+
+                new_seg = elem.join(parts)
+                new_segments[idx] = new_seg
+                applied.append(
+                    f"Segment {seg_tag} occurrence {count}: field {field_pos} changed from '{old}' to '{parts[arr_idx]}'"
+                )
+                # if occurrence provided, stop after applying to that occurrence
+                if occ:
+                    break
+
+    new_text = join_segments(new_segments, seg_term)
+    return new_text, applied
+
+
+# --- pyx12 validator wrapper ---
+def pyx12_validate(edi_text: str, seg_term: Optional[str] = None) -> Tuple[bool, List[str]]:
+    """
+    Validate edi_text using pyx12 if available.
+
+    Returns (is_valid, errors_list). If pyx12 is not installed or fails, 
+    returns a lightweight syntax check result and messages.
+
+    Note: pyx12 APIs differ across versions; this wrapper attempts common calls.
+    Please change implementation to match your pyx12 version if needed.
+    """
+    try:
+        # Attempt to import typical pyx12 modules
+        import pyx12
+        # Many pyx12 installs expose x12n_document in pyx12.x12n_document or pyx12.xml
+        try:
+            from pyx12.x12n_document import x12n_document
+            from pyx12.params import ParamsBase
+        except Exception:
+            # try alternative import paths
+            try:
+                from pyx12.x12n_document import x12n_document
+                from pyx12.params import ParamsBase
+            except Exception:
+                # give up pyx12 detailed call and fallback
+                raise
+
+        # prepare buffers
+        seg_term_detected, elem = detect_separators(edi_text)
+        edibuffer = io.StringIO(edi_text)
+        xmlbuffer = io.StringIO()
+        params = ParamsBase()
+
+        # x12n_document signature varies; common invocation used widely:
+        # result = x12n_document(params, edibuffer, fd_997=None, fd_html=None, fd_xmldoc=xmlbuffer, map_path=None)
+        result = x12n_document(params, edibuffer, fd_997=None, fd_html=None, fd_xmldoc=xmlbuffer, map_path=None)
+
+        # `result` sometimes is an object with attribute 'errors' or 'error_list'
+        errors = []
+        if hasattr(result, "errors"):
+            # result.errors may be a list of tuples or strings
+            for e in result.errors:
+                errors.append(str(e))
+        elif hasattr(result, "error_list"):
+            for e in result.error_list:
+                errors.append(str(e))
+        else:
+            # try to parse xmlbuffer for errors or rely on result truthiness
+            xml_value = xmlbuffer.getvalue()
+            if "error" in xml_value.lower():
+                errors.append(xml_value)
+        is_valid = len(errors) == 0
+        return is_valid, errors
+    except Exception as e:
+        # pyx12 not present or failed — fallback simple checks
+        fallback_errors = []
+        text = edi_text.strip()
+        if not text.startswith("ISA"):
+            fallback_errors.append("Missing or malformed ISA segment at beginning.")
+        if "IEA" not in text:
+            fallback_errors.append("Missing IEA segment (interchange trailer).")
+        # other basic checks
+        if len(fallback_errors) == 0:
+            return True, []
+        return False, fallback_errors
+
+
+def is_valid_x12(edi_file_name: str, segments: List[str], log_path: Optional[str] = None) -> Tuple[bool, List[str]]:
+    """
+    Example wrapper requested in the prompt: given a filename and segments list validate the joined EDI.
+    This function writes logs if log_path provided.
+    """
+    logFormatter = logging.Formatter("%(asctime)s [%(levelname)-5.5s] (%(filename)s) %(message)s")
+    logger = logging.getLogger("validation_x12")
+    logger.setLevel(logging.INFO)
+    # Prevent duplicate handlers
+    if not logger.handlers:
+        consoleHandler = logging.StreamHandler()
+        consoleHandler.setFormatter(logFormatter)
+        logger.addHandler(consoleHandler)
+        if log_path is not None:
+            fh = logging.FileHandler(os.path.join(log_path, "validation_X12.log"))
+            fh.setFormatter(logFormatter)
+            logger.addHandler(fh)
+
+    edi_text = "\n".join(segments)
+    logger.info(f"Validating file {edi_file_name} (length={len(edi_text)} chars)")
+    is_valid, errors = pyx12_validate(edi_text)
+    if is_valid:
+        logger.info("Validation successful.")
+    else:
+        logger.warning("Validation failed: " + "; ".join(errors))
+    return is_valid, errors
+
+
+# --- LLM prompting ---
+
+
+def create_llm():
+    """
+    Create AzureChatOpenAI LLM via LangChain. Expects env vars:
+    AZURE_OPENAI_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT
+    """
+    key = os.getenv("AZURE_OPENAI_KEY")
+    base = os.getenv("AZURE_OPENAI_ENDPOINT")
+    deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT")
+    if not (key and base and deployment):
+        raise EnvironmentError("Set AZURE_OPENAI_KEY, AZURE_OPENAI_ENDPOINT, and AZURE_OPENAI_DEPLOYMENT env variables.")
+    llm = AzureChatOpenAI(
+        deployment_name=deployment,
+        openai_api_key=key,
+        openai_api_base=base,
+        openai_api_version="2023-05-15",
+        temperature=0.0
+    )
+    return llm
+
+
+# Prompt templates
+EDIT_PLAN_PROMPT = ChatPromptTemplate.from_messages([
+    SystemMessagePromptTemplate.from_template(
+        "You are an EDI X12 expert. The user uploaded an EDI file and asks for a specific change."
+    ),
+    HumanMessagePromptTemplate.from_template(
+        "EDI (first 2000 chars):\n{edi_preview}\n\n"
+        "User request: {user_request}\n\n"
+        "Produce a JSON array named 'edits' where each element describes a single deterministic edit.\n"
+        "Each edit must follow this schema:\n"
+        "{\n"
+        "  \"segment\": \"<SEG_TAG>\",           # e.g. DTP\n"
+        "  \"occurrence\": <N|null>,             # 1-based occurrence to change; null or omitted = all occurrences\n"
+        "  \"field_pos\": <M>,                   # 1-based position of the element after the segment tag (1 = first element after tag)\n"
+        "  \"subfield_pos\": <K|null>,           # optional for component sub-elements (1-based)\n"
+        "  \"match\": {\"old_value\": \"...\"},  # optional: only apply when current value equals this\n"
+        "  \"new_value\": \"...\"                # new value to place\n"
+        "}\n\n"
+        "Return ONLY valid JSON (no explanatory text) with a top-level object like: {\"edits\": [ ... ], \"explain\": \"short human summary\"}\n"
+        "If you cannot identify segments/positions, return edits: [] and explain why."
+    )
+])
+
+
+ERROR_FIX_PROMPT = ChatPromptTemplate.from_messages([
+    SystemMessagePromptTemplate.from_template(
+        "You are an EDI X12 expert. The LLM previously proposed edits, they were applied, and the EDI failed validation with errors. Please produce a set of additional edits or corrections to resolve the errors."
+    ),
+    HumanMessagePromptTemplate.from_template(
+        "Current EDI (first 2000 chars):\n{edi_preview}\n\nValidation errors:\n{errors}\n\n"
+        "Produce a JSON object: {\"edits\": [ ... ], \"explain\": \"short explanation\"}\n"
+        "Edits should follow the same schema used earlier and should be minimal to resolve the validation errors."
+    )
+])
+
+
+def llm_generate_edit_plan(llm, edi_text: str, user_request: str) -> Dict[str, Any]:
+    edi_preview = edi_text[:2000]
+    prompt_input = {"edi_preview": edi_preview, "user_request": user_request}
+    res = EDIT_PLAN_PROMPT.format_prompt(**prompt_input).to_messages()
+    llm_response = llm.generate(res)
+    # Grab text
+    text = llm_response.generations[0][0].text.strip()
+    # Expect JSON only
+    try:
+        j = json.loads(text)
+    except Exception as e:
+        # Try to extract the first JSON object inside the text
+        import re
+        m = re.search(r'(\{.*\})', text, flags=re.S)
+        if m:
+            j = json.loads(m.group(1))
+        else:
+            raise ValueError("LLM did not return JSON edit plan. Raw response:\n" + text)
+    return j
+
+
+def llm_fix_errors(llm, edi_text: str, errors: List[str]) -> Dict[str, Any]:
+    edi_preview = edi_text[:2000]
+    prompt_input = {"edi_preview": edi_preview, "errors": "\n".join(errors)}
+    res = ERROR_FIX_PROMPT.format_prompt(**prompt_input).to_messages()
+    llm_response = llm.generate(res)
+    text = llm_response.generations[0][0].text.strip()
+    try:
+        j = json.loads(text)
+    except Exception:
+        import re
+        m = re.search(r'(\{.*\})', text, flags=re.S)
+        if m:
+            j = json.loads(m.group(1))
+        else:
+            raise ValueError("LLM did not return JSON on fix step. Raw response:\n" + text)
+    return j
+
+
+# --- Orchestration workflow ---
+
+
+def run_edit_workflow(llm, original_edi: str, user_request: str, max_iterations: int = 3) -> Dict[str, Any]:
+    """
+    Main workflow:
+    1. Ask LLM for edit plan (JSON)
+    2. Apply edits deterministically
+    3. Validate using pyx12_validate
+    4. If errors, send errors back to LLM for corrections and repeat up to max_iterations
+
+    Returns dictionary:
+      {
+        "final_edi": "...",
+        "history": [
+            {"edits": [...], "summary": "...", "applied": [...], "valid": True/False, "errors":[...]}
+        ],
+        "success": True/False
+      }
+    """
+    current = original_edi
+    history = []
+
+    # Step 1: initial plan
+    try:
+        plan = llm_generate_edit_plan(llm, current, user_request)
+    except Exception as e:
+        return {"final_edi": current, "history": [{"error": str(e)}], "success": False}
+
+    edits = plan.get("edits", [])
+    explain = plan.get("explain", "")
+    new_edi, applied = apply_edits(current, edits)
+    is_valid, errors = pyx12_validate(new_edi)
+
+    history.append({"edits": edits, "explain": explain, "applied": applied, "valid": is_valid, "errors": errors})
+    current = new_edi
+
+    iter_count = 0
+    while not is_valid and iter_count < max_iterations:
+        iter_count += 1
+        # ask LLM to propose fixes based on errors
+        try:
+            fix_plan = llm_fix_errors(llm, current, errors)
+        except Exception as e:
+            history.append({"error_from_llm_fix": str(e)})
+            break
+        fix_edits = fix_plan.get("edits", [])
+        fix_explain = fix_plan.get("explain", "")
+        new_edi2, applied2 = apply_edits(current, fix_edits)
+        is_valid2, errors2 = pyx12_validate(new_edi2)
+        history.append({"edits": fix_edits, "explain": fix_explain, "applied": applied2, "valid": is_valid2, "errors": errors2})
+        current = new_edi2
+        is_valid = is_valid2
+        errors = errors2
+
+    return {"final_edi": current, "history": history, "success": is_valid}
+
+
+# --- Example CLI / Streamlit usage snippet ---
+
+if __name__ == "__main__":
+    # quick demo in CLI, not a full streamlit app
+    llm = create_llm()
+
+    # Read an EDI from file for testing
+    sample_path = "sample.edi"
+    if os.path.exists(sample_path):
+        with open(sample_path, "r", encoding="utf-8") as f:
+            edi_text = f.read()
+    else:
+        edi_text = "ISA*00*          *00*          *ZZ*SOMEID       *ZZ*DESTID       *210101*1253*^*00501*000000905*0*T*:~GS*HC*SENDER*RECEIVER*20210101*1253*1*X*005010X222~"  # tiny sample
+
+    print("Enter user request (example: change service line DTP to 20250101):")
+    ur = input().strip()
+    result = run_edit_workflow(llm, edi_text, ur, max_iterations=3)
+
+    print("Success:", result["success"])
+    for i, h in enumerate(result["history"], 1):
+        print(f"Step {i}: valid={h.get('valid')} errors={h.get('errors')}")
+        print("Applied:", h.get("applied"))
+    print("---- Final EDI ----")
+    print(result["final_edi"][:2000])
+
+
+
+
+
+
+
+
+
+
+
 import streamlit as st
 from langchain.chat_models import AzureChatOpenAI
 from langchain.prompts import ChatPromptTemplate
