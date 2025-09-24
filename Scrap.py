@@ -1,3 +1,96 @@
+import streamlit as st
+from langchain.chat_models import AzureChatOpenAI
+from langchain.prompts import ChatPromptTemplate
+import os, json
+
+# ---- Azure OpenAI setup ----
+llm = AzureChatOpenAI(
+    deployment_name="your-deployment",
+    openai_api_key=os.getenv("AZURE_OPENAI_KEY"),
+    openai_api_base=os.getenv("AZURE_OPENAI_ENDPOINT"),
+    openai_api_version="2023-05-15",
+    temperature=0
+)
+
+st.title("EDI AI Editor")
+
+uploaded_file = st.file_uploader("Upload EDI file", type=["edi", "txt"])
+if uploaded_file:
+    edi_content = uploaded_file.read().decode("utf-8")
+    st.text_area("EDI Preview", edi_content, height=200)
+
+    # Initialize session state
+    if "edi_data" not in st.session_state:
+        st.session_state.edi_data = edi_content
+    if "change_log" not in st.session_state:
+        st.session_state.change_log = []
+
+    query = st.text_input("Enter your edit request (e.g. 'Change service line date')")
+
+    if query and st.button("Apply Change"):
+        prompt = ChatPromptTemplate.from_template("""
+        You are an EDI expert. 
+        Current EDI:
+        {edi}
+
+        User request: {query}
+
+        Return your response in JSON with two fields:
+        {{
+            "edi_updated": "<the updated EDI only>",
+            "summary": "<summary of what changed>"
+        }}
+        """)
+
+        chain = prompt | llm
+        result = chain.invoke({"edi": st.session_state.edi_data, "query": query})
+
+        try:
+            data = json.loads(result.content)
+            st.session_state.edi_data = data["edi_updated"]
+            st.session_state.change_log.append(data["summary"])
+        except Exception:
+            st.error("⚠️ Failed to parse response. Please retry.")
+            st.text(result.content)
+
+    # Show change log
+    if st.session_state.change_log:
+        st.subheader("✅ Change Log")
+        for i, change in enumerate(st.session_state.change_log, 1):
+            st.markdown(f"**{i}.** {change}")
+
+    # Final download buttons
+    if st.button("Generate Final Files"):
+        # Download EDI
+        st.download_button(
+            "⬇️ Download Final EDI",
+            st.session_state.edi_data,
+            file_name="updated.edi"
+        )
+
+        # Download Summary log
+        summary_text = "\n".join(
+            [f"{i+1}. {c}" for i, c in enumerate(st.session_state.change_log)]
+        )
+        st.download_button(
+            "⬇️ Download Change Summary",
+            summary_text,
+            file_name="change_summary.txt"
+        )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 """
 edi_agent.py
 
