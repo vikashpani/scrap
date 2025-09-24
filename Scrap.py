@@ -1,6 +1,151 @@
 
 import streamlit as st
 import pandas as pd
+import os, json, zipfile, math
+from io import StringIO, BytesIO
+from pyx12.x12n_document import x12n_document
+from pyx12.params import Params
+from pyx12.error_handler import ErrorHandler
+from langchain_groq import ChatGroq
+from langchain.prompts import ChatPromptTemplate
+
+# --- Helper: validate edi ---
+def validate_x12(edi_content):
+    errors = []
+    params = Params()
+    eh = ErrorHandler()
+    edi_buffer = StringIO(edi_content)
+    try:
+        x12n_document(params, edi_buffer,
+                      fd_997=None, fd_html=None,
+                      fd_xmldoc=None, map_path=None, errh=eh)
+        if eh.has_errors():
+            return False, [str(e) for e in eh.get_errors()]
+        return True, []
+    except Exception as e:
+        return False, [str(e)]
+
+# --- Streamlit UI ---
+st.title("EDI Bulk Modifier with Groq + Auto-chunking")
+
+excel_file = st.file_uploader("Upload Excel with modification queries", type=["xlsx"])
+edi_file = st.file_uploader("Upload Base EDI File", type=["edi","txt"])
+
+if excel_file and edi_file:
+    df = pd.read_excel(excel_file)
+    queries = df["ChangeQuery"].tolist()
+    edi_text = edi_file.read().decode("utf-8")
+
+    chunk_size = st.number_input("Rows per LLM call (chunk size)", min_value=5, max_value=50, value=20)
+    
+    if st.button("Generate EDIs"):
+        st.info("Processing... this may take a while ⏳")
+        os.makedirs("output/valid", exist_ok=True)
+        os.makedirs("output/invalid", exist_ok=True)
+        
+        llm = ChatGroq(model="llama3-70b-8192", temperature=0, max_tokens=4000)
+        all_results = []
+
+        total_rows = len(queries)
+        num_chunks = math.ceil(total_rows / chunk_size)
+
+        for i in range(num_chunks):
+            start = i * chunk_size
+            end = min((i + 1) * chunk_size, total_rows)
+            chunk_queries = [{"row": j+1, "query": queries[j]} for j in range(start, end)]
+
+            prompt = ChatPromptTemplate.from_template("""
+            You are an EDI expert.
+            Given an EDI file and modification instructions, update the EDI for each row.
+            Return JSON like:
+            {
+             "results": [
+               {"row": <row>, "edi_updated": "<edi>", "summary": "<what changed>"}
+             ]
+            }
+            EDI File:
+            {edi_file}
+
+            Instructions:
+            {instructions}
+            """)
+
+            response = llm.invoke(
+                prompt.format_messages(
+                    edi_file=edi_text,
+                    instructions=json.dumps(chunk_queries)
+                )
+            )
+
+            # Parse LLM JSON
+            try:
+                data_str = response.content.strip().replace("```json","").replace("```","")
+                data_chunk = json.loads(data_str)
+                all_results.extend(data_chunk["results"])
+            except Exception as e:
+                st.error(f"❌ Failed to parse LLM response for rows {start+1}-{end}: {e}")
+                st.text(response.content)
+                continue
+
+        # --- Validate and save ---
+        results_log = []
+        for result in all_results:
+            row = result["row"]
+            edi_updated = result["edi_updated"]
+            summary = result.get("summary", "")
+            valid, errors = validate_x12(edi_updated)
+
+            if valid:
+                filepath = f"output/valid/row_{row}.edi"
+                with open(filepath, "w") as f:
+                    f.write(edi_updated)
+                results_log.append({"Row": row, "Query": queries[row-1], "Status": "Valid", "Summary": summary})
+            else:
+                filepath = f"output/invalid/row_{row}.edi"
+                with open(filepath, "w") as f:
+                    f.write(edi_updated)
+                with open(f"output/invalid/row_{row}_reason.txt","w") as f:
+                    f.write("\n".join(errors))
+                results_log.append({
+                    "Row": row,
+                    "Query": queries[row-1],
+                    "Status": "Invalid",
+                    "Summary": summary,
+                    "Errors": "; ".join(errors)
+                })
+
+        # --- Show summary ---
+        st.success("✅ Processing complete")
+        st.dataframe(pd.DataFrame(results_log))
+
+        # --- Download ZIP ---
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            for folder in ["valid","invalid"]:
+                folder_path = os.path.join("output", folder)
+                for fname in os.listdir(folder_path):
+                    zf.write(os.path.join(folder_path,fname), arcname=f"{folder}/{fname}")
+        zip_buffer.seek(0)
+
+        st.download_button(
+            label="Download All Results (ZIP)",
+            data=zip_buffer,
+            file_name="edi_output.zip",
+            mime="application/zip"
+        )
+
+
+
+
+
+
+
+
+
+
+
+import streamlit as st
+import pandas as pd
 import os, json, zipfile
 from io import StringIO, BytesIO
 from pyx12.x12n_document import x12n_document
