@@ -1,3 +1,109 @@
+import pandas as pd
+import os, json
+from io import StringIO
+from pyx12.x12n_document import x12n_document
+from pyx12.params import Params
+from pyx12.error_handler import ErrorHandler
+
+# --- Step 1: Read Excel ---
+df = pd.read_excel("instructions.xlsx")
+queries = df["ChangeQuery"].tolist()
+
+# --- Step 2: Build LLM input ---
+edi_text = open("input.edi").read()
+
+instructions = [{"row": i+1, "query": q} for i, q in enumerate(queries)]
+llm_input = {
+    "edi_file": edi_text,
+    "instructions": instructions
+}
+
+# --- Step 3: Call LLM ---
+from langchain_openai import AzureChatOpenAI
+from langchain.prompts import ChatPromptTemplate
+
+llm = AzureChatOpenAI(
+    deployment_name="your-deployment",
+    temperature=0,
+    max_tokens=4000
+)
+
+prompt = ChatPromptTemplate.from_template("""
+You are an EDI expert.
+Given an EDI file and modification instructions, update the EDI for each row.
+Return JSON like:
+{
+ "results": [
+   {"row": <row>, "edi_updated": "<edi>", "summary": "<what changed>"}
+ ]
+}
+EDI File:
+{edi_file}
+
+Instructions:
+{instructions}
+""")
+
+response = llm.invoke(prompt.format_messages(edi_file=edi_text, instructions=json.dumps(instructions)))
+
+# --- Step 4: Parse response ---
+data_str = response.content.strip().replace("```json","").replace("```","")
+data = json.loads(data_str)
+
+os.makedirs("output/valid", exist_ok=True)
+os.makedirs("output/invalid", exist_ok=True)
+
+# --- Step 5: Validate and Save ---
+for result in data["results"]:
+    row = result["row"]
+    edi_updated = result["edi_updated"]
+    summary = result["summary"]
+
+    # Save file
+    edi_file_path = f"output/temp_row_{row}.edi"
+    with open(edi_file_path, "w") as f:
+        f.write(edi_updated)
+
+    # Validate
+    try:
+        valid, errors = validate_x12(edi_updated)
+        if valid:
+            with open(f"output/valid/row_{row}.edi", "w") as f:
+                f.write(edi_updated)
+        else:
+            with open(f"output/invalid/row_{row}.edi", "w") as f:
+                f.write(edi_updated)
+            with open(f"output/invalid/row_{row}_reason.txt", "w") as f:
+                f.write("\n".join(errors))
+    except Exception as e:
+        with open(f"output/invalid/row_{row}_reason.txt", "w") as f:
+            f.write(str(e))
+
+# --- Helper: validation function ---
+def validate_x12(edi_content):
+    """Validate using pyx12 and return (is_valid, errors)."""
+    errors = []
+    params = Params()
+    eh = ErrorHandler()
+    edi_buffer = StringIO(edi_content)
+    try:
+        x12n_document(params, edi_buffer, fd_997=None, fd_html=None, fd_xmldoc=None, map_path=None, errh=eh)
+        if eh.has_errors():
+            return False, eh.get_errors()
+        return True, []
+    except Exception as e:
+        return False, [str(e)]
+
+
+
+
+
+
+
+
+
+
+
 import streamlit as st
 from langchain.chat_models import AzureChatOpenAI
 from langchain.prompts import ChatPromptTemplate
