@@ -1,3 +1,135 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import faiss
+import re
+from langchain_community.embeddings import HuggingFaceBgeEmbeddings
+from sklearn.metrics.pairwise import cosine_similarity
+
+# -----------------------
+# Config
+# -----------------------
+MODEL_NAME = "BAAI/bge-small-en"  # or "BAAI/bge-m3"
+INDEX_FILE = "claims_index.faiss"
+
+model_kwargs = {"device": "cpu"}  # or "cuda"
+encode_kwargs = {"normalize_embeddings": True}
+
+embedding_model = HuggingFaceBgeEmbeddings(
+    model_name=MODEL_NAME,
+    model_kwargs=model_kwargs,
+    encode_kwargs=encode_kwargs
+)
+
+# -----------------------
+# Helpers
+# -----------------------
+
+def row_to_text(row):
+    return ", ".join([f"{col}: {row[col]}" for col in row.index])
+
+def build_index(df):
+    global index, id_to_row
+
+    df = df.astype(str)
+    texts = df.apply(row_to_text, axis=1).tolist()
+    st.info(f"Generating embeddings for {len(texts)} rows...")
+    embeddings = embedding_model.embed_documents(texts)
+    embeddings = np.array(embeddings, dtype="float32")
+
+    d = embeddings.shape[1]
+    index = faiss.IndexFlatL2(d)
+    index.add(embeddings)
+
+    id_to_row = {i: idx for i, idx in enumerate(df.index)}
+    faiss.write_index(index, INDEX_FILE)
+    st.success("Index built & saved.")
+
+def load_index():
+    global df, index, id_to_row
+    df = df.astype(str)
+    index = faiss.read_index(INDEX_FILE)
+    id_to_row = {i: idx for i, idx in enumerate(df.index)}
+
+def detect_columns(query, df):
+    """Dynamically detect relevant columns using embeddings."""
+    query_emb = embedding_model.embed_query(query)
+    col_embeddings = [embedding_model.embed_query(col) for col in df.columns]
+    sims = cosine_similarity([query_emb], col_embeddings)[0]
+    top_cols = [df.columns[i] for i in np.argsort(sims)[::-1] if sims[i] > 0.5]
+    return top_cols
+
+def hybrid_search(query, top_k=10):
+    """Generic search combining semantic + structured filtering"""
+    values = re.findall(r"[A-Za-z0-9\.\-]+", query)
+    candidate_cols = detect_columns(query, df)
+    matches = {}
+
+    # Structured filtering
+    for col in candidate_cols:
+        mask = df[col].astype(str).str.contains("|".join(values), case=False, na=False)
+        sub_df = df[mask]
+        if not sub_df.empty:
+            matches[col] = sub_df
+
+    # Fall back to semantic FAISS search
+    if not matches:
+        q_embed = np.array([embedding_model.embed_query(query)], dtype="float32")
+        distances, indices = index.search(q_embed, top_k)
+        sem_results = [df.iloc[id_to_row[idx]] for idx in indices[0]]
+        return pd.DataFrame(sem_results)
+
+    # Return structured matches
+    return matches
+
+# -----------------------
+# Streamlit UI
+# -----------------------
+
+st.title("Claims Vector Search with HuggingFace BGE + FAISS")
+
+uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx", "csv"])
+
+if uploaded_file:
+    if uploaded_file.name.endswith(".xlsx"):
+        df = pd.read_excel(uploaded_file)
+    else:
+        df = pd.read_csv(uploaded_file)
+
+    st.write("Preview of your data:")
+    st.dataframe(df.head())
+
+    if st.button("Build / Rebuild Index"):
+        build_index(df)
+
+    st.write("---")
+    query = st.text_input("Enter your search query (natural language)")
+
+    if query:
+        results = hybrid_search(query)
+        st.write("### Search Results:")
+
+        if isinstance(results, dict):
+            for col, sub_df in results.items():
+                st.write(f"**Matches in column `{col}`:**")
+                st.dataframe(sub_df)
+        else:
+            st.dataframe(results)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import pandas as pd
 import faiss
