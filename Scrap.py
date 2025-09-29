@@ -2,6 +2,168 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import faiss
+import tempfile
+from langchain.embeddings import HuggingFaceBgeEmbeddings
+from langchain.schema import Document
+from pdf2image import convert_from_path
+import pytesseract
+
+st.set_page_config(page_title="PDF Service Matcher", layout="wide")
+
+st.title("PDF Service Matcher with Excel")
+
+# ------------------------------
+# Step 1: Load Excel B and create FAISS index
+# ------------------------------
+@st.cache_data
+def load_excel_and_build_index(excel_path):
+    df = pd.read_excel(excel_path)
+    
+    embedding_model = HuggingFaceBgeEmbeddings(
+        model_name="BAAI/bge-large-en",
+        model_kwargs={"device": "cpu"},  # or "cuda" if GPU available
+        encode_kwargs={"normalize_embeddings": True}  # cosine similarity
+    )
+    
+    service_names = df["Service_Name"].astype(str).tolist()
+    vectors = embedding_model.embed_documents(service_names)
+    vectors = np.array(vectors).astype("float32")
+    
+    dim = vectors.shape[1]
+    index = faiss.IndexFlatIP(dim)
+    index.add(vectors)
+    
+    # Mapping FAISS index to Excel row
+    index_to_row = {i: df.iloc[i] for i in range(len(df))}
+    
+    return df, embedding_model, index, index_to_row
+
+st.info("Load Excel B (large service dataset)")
+excel_file = st.file_uploader("Upload Excel B", type=["xlsx"])
+if excel_file:
+    with st.spinner("Building FAISS index..."):
+        df_b, embedding_model, faiss_index, index_to_row = load_excel_and_build_index(excel_file)
+    st.success(f"Loaded {len(df_b)} services from Excel B and built FAISS index.")
+
+# ------------------------------
+# Step 2: PDF Upload and OCR
+# ------------------------------
+def fallback_ocr_loader(pdf_path):
+    images = convert_from_path(pdf_path)
+    docs = []
+    for i, img in enumerate(images):
+        try:
+            text = pytesseract.image_to_string(img)
+            page_text = f"\n[Page {i+1}]\n{text.strip()}"
+            docs.append(Document(page_content=page_text))
+        except Exception as e:
+            st.warning(f"OCR failed on page {i+1}: {e}")
+    return docs
+
+def extract_text_from_pdf(uploaded_pdf):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        tmp.write(uploaded_pdf.read())
+        tmp_path = tmp.name
+    
+    # Try normal text extraction
+    try:
+        from PyPDF2 import PdfReader
+        reader = PdfReader(tmp_path)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() + "\n"
+        if text.strip() == "":
+            raise ValueError("No text layer")
+        docs = [Document(page_content=text)]
+    except:
+        # Use OCR fallback
+        docs = fallback_ocr_loader(tmp_path)
+    return docs
+
+uploaded_pdfs = st.file_uploader("Upload PDF Contracts", type=["pdf"], accept_multiple_files=True)
+
+# ------------------------------
+# Step 3: Similarity search against Excel B
+# ------------------------------
+def search_services_in_excel(pdf_services, embedding_model, faiss_index, index_to_row, top_k=5, threshold=0.75):
+    query_vectors = embedding_model.embed_documents(pdf_services)
+    query_vectors = np.array(query_vectors).astype("float32")
+    
+    scores, indices = faiss_index.search(query_vectors, top_k)
+    
+    results = []
+    for q_idx, idx_list in enumerate(indices):
+        matched_rows = []
+        for score, idx in zip(scores[q_idx], idx_list):
+            if score < threshold or idx == -1:
+                continue
+            row = index_to_row[idx]
+            matched_rows.append({
+                "PDF_Service": pdf_services[q_idx],
+                "Matched_Service": row["Service_Name"],
+                "CPT_Code": row.get("CPT_Code", None),
+                "Similarity_Score": score
+            })
+        if not matched_rows:
+            matched_rows.append({
+                "PDF_Service": pdf_services[q_idx],
+                "Matched_Service": None,
+                "CPT_Code": None,
+                "Similarity_Score": None
+            })
+        results.extend(matched_rows)
+    return pd.DataFrame(results)
+
+# ------------------------------
+# Step 4: Process PDFs and display results
+# ------------------------------
+if uploaded_pdfs and excel_file:
+    all_results = []
+    for pdf in uploaded_pdfs:
+        with st.spinner(f"Processing {pdf.name}..."):
+            docs = extract_text_from_pdf(pdf)
+            pdf_services = []
+            for doc in docs:
+                # Simple split by lines or customize your extraction logic
+                lines = [line.strip() for line in doc.page_content.split("\n") if line.strip()]
+                pdf_services.extend(lines)
+            if not pdf_services:
+                st.warning(f"No services found in {pdf.name}")
+                continue
+            
+            df_results = search_services_in_excel(pdf_services, embedding_model, faiss_index, index_to_row)
+            df_results["PDF_File"] = pdf.name
+            all_results.append(df_results)
+    
+    if all_results:
+        final_df = pd.concat(all_results, ignore_index=True)
+        st.success("All PDFs processed successfully!")
+        st.dataframe(final_df)
+        
+        # Download
+        output_file = "matched_services.xlsx"
+        final_df.to_excel(output_file, index=False)
+        with open(output_file, "rb") as f:
+            st.download_button(
+                "Download Results as Excel",
+                data=f,
+                file_name=output_file,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+
+
+
+
+
+
+
+
+
+..import streamlit as st
+import pandas as pd
+import numpy as np
+import faiss
 import re
 from langchain_community.embeddings import HuggingFaceBgeEmbeddings
 from sklearn.metrics.pairwise import cosine_similarity
