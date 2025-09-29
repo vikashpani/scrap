@@ -1,3 +1,143 @@
+import pandas as pd
+import faiss
+import torch
+from transformers import AutoTokenizer, AutoModel
+
+# -----------------------
+# 🔹 Config
+# -----------------------
+MODEL_NAME = "BAAI/bge-small-en"  # or "BAAI/bge-m3" for multilingual
+INDEX_FILE = "claims_index.faiss"
+
+# -----------------------
+# 🔹 Load HuggingFace BGE model
+# -----------------------
+print("Loading embedding model...")
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+model = AutoModel.from_pretrained(MODEL_NAME)
+
+# -----------------------
+# 🔹 Embedding function
+# -----------------------
+def get_embeddings(sentences, batch_size=32):
+    all_embeddings = []
+    for i in range(0, len(sentences), batch_size):
+        batch = sentences[i:i+batch_size]
+        encoded_input = tokenizer(batch, padding=True, truncation=True, return_tensors="pt")
+        with torch.no_grad():
+            model_output = model(**encoded_input)
+        # Mean pooling
+        embeddings = model_output.last_hidden_state.mean(dim=1)
+        all_embeddings.append(embeddings)
+    return torch.cat(all_embeddings, dim=0).cpu().numpy()
+
+# -----------------------
+# 🔹 Convert row -> text
+# -----------------------
+def row_to_text(row):
+    return f"Claim Number: {row['Claims number']}, POS: {row['pos']}, CPT Codes: {row['cpt codes']}"
+
+# -----------------------
+# 🔹 Build FAISS index
+# -----------------------
+def build_index(excel_file):
+    global df, index, id_to_row
+
+    df = pd.read_excel(excel_file)
+    df = df[["Claims number", "pos", "cpt codes"]].astype(str)
+
+    texts = df.apply(row_to_text, axis=1).tolist()
+    print(f"Generating embeddings for {len(texts)} rows...")
+    embeddings = get_embeddings(texts, batch_size=64)
+
+    d = embeddings.shape[1]
+    index = faiss.IndexFlatL2(d)
+    index.add(embeddings)
+
+    id_to_row = {i: idx for i, idx in enumerate(df.index)}
+
+    faiss.write_index(index, INDEX_FILE)
+    print(f"✅ Index built & saved to {INDEX_FILE}")
+
+# -----------------------
+# 🔹 Load FAISS index
+# -----------------------
+def load_index(excel_file):
+    global df, index, id_to_row
+
+    df = pd.read_excel(excel_file)
+    df = df[["Claims number", "pos", "cpt codes"]].astype(str)
+
+    index = faiss.read_index(INDEX_FILE)
+    id_to_row = {i: idx for i, idx in enumerate(df.index)}
+    print(f"✅ Index loaded from {INDEX_FILE}")
+
+# -----------------------
+# 🔹 Search Query
+# -----------------------
+def search_query(query, top_k=5):
+    q_embed = get_embeddings([query])
+    distances, indices = index.search(q_embed, top_k)
+
+    results = []
+    for idx in indices[0]:
+        row = df.iloc[id_to_row[idx]]
+        results.append(row)
+    return pd.DataFrame(results)
+
+# -----------------------
+# 🔹 Update Index
+# -----------------------
+def update_faiss(new_excel_file):
+    global df, index, id_to_row
+
+    new_df = pd.read_excel(new_excel_file)
+    new_df = new_df[["Claims number", "pos", "cpt codes"]].astype(str)
+
+    new_texts = new_df.apply(row_to_text, axis=1).tolist()
+    new_embeds = get_embeddings(new_texts, batch_size=64)
+
+    index.add(new_embeds)
+
+    start_id = len(id_to_row)
+    for i, idx in enumerate(new_df.index):
+        id_to_row[start_id + i] = idx
+
+    df = pd.concat([df, new_df], ignore_index=True)
+    faiss.write_index(index, INDEX_FILE)
+    print(f"✅ Index updated & saved to {INDEX_FILE}")
+
+# -----------------------
+# 🔹 Example Usage
+# -----------------------
+if __name__ == "__main__":
+    excel_file = "claims_data.xlsx"
+
+    # 1. Build index from scratch
+    build_index(excel_file)
+
+    # 2. Search a query
+    query = "Find claims with CPT code 99213 in POS 11"
+    results = search_query(query, top_k=10)
+    print("\n🔍 Search Results:")
+    print(results)
+
+    # 3. Update with new file (optional)
+    # update_faiss("new_claims.xlsx")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 import streamlit as st
 import pandas as pd
