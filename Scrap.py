@@ -1,5 +1,117 @@
 import streamlit as st
 import pandas as pd
+import faiss
+import numpy as np
+import time
+import os
+import pickle
+from sentence_transformers import SentenceTransformer
+
+# ======================
+# Config
+# ======================
+INDEX_FILE = "faiss_index.bin"
+EMB_FILE = "embeddings.pkl"
+DF_FILE = "data.pkl"
+
+st.title("Excel Semantic Search with BGE Embeddings + FAISS (Cached)")
+
+# Upload Excel
+uploaded_file = st.file_uploader("Upload your Excel file", type=["xlsx", "xls"])
+
+if uploaded_file:
+    df = pd.read_excel(uploaded_file)
+
+    # Pick text column
+    text_column = st.selectbox("Select the text column to embed", df.columns)
+
+    # Load model
+    @st.cache_resource
+    def load_model():
+        return SentenceTransformer("BAAI/bge-small-en")
+
+    model = load_model()
+
+    texts = df[text_column].astype(str).tolist()
+    st.write(f"✅ Loaded {len(texts)} rows")
+
+    # ======================
+    # Load or Build Index
+    # ======================
+    if os.path.exists(INDEX_FILE) and os.path.exists(EMB_FILE) and os.path.exists(DF_FILE):
+        st.info("📂 Found cached index, loading from disk...")
+
+        index = faiss.read_index(INDEX_FILE)
+
+        with open(EMB_FILE, "rb") as f:
+            embeddings = pickle.load(f)
+
+        with open(DF_FILE, "rb") as f:
+            df_cached = pickle.load(f)
+
+        # If uploaded data is different, rebuild index
+        if len(df) != len(df_cached) or not df.equals(df_cached):
+            st.warning("⚠️ Uploaded file differs from cached one → rebuilding index...")
+            rebuild = True
+        else:
+            rebuild = False
+    else:
+        rebuild = True
+
+    if rebuild:
+        st.info("🔄 Building FAISS index... this may take time for millions of rows")
+
+        embeddings = model.encode(texts, batch_size=128, show_progress_bar=True)
+        embeddings = np.array(embeddings, dtype="float32")
+        faiss.normalize_L2(embeddings)
+
+        dimension = embeddings.shape[1]
+        index = faiss.IndexFlatIP(dimension)
+        index.add(embeddings)
+
+        # Save everything
+        faiss.write_index(index, INDEX_FILE)
+        with open(EMB_FILE, "wb") as f:
+            pickle.dump(embeddings, f)
+        with open(DF_FILE, "wb") as f:
+            pickle.dump(df, f)
+
+        st.success("✅ Index built and cached on disk!")
+
+    # ======================
+    # Query Search
+    # ======================
+    query = st.text_input("Enter your search query:")
+
+    if query:
+        start = time.time()
+        query_emb = model.encode([query])
+        faiss.normalize_L2(query_emb)
+        D, I = index.search(np.array(query_emb, dtype="float32"), 10)
+        end = time.time()
+
+        st.write(f"🔍 Search took **{end - start:.4f} seconds**")
+
+        st.write("### Top 10 Matches")
+        for idx, score in zip(I[0], D[0]):
+            row_data = df.iloc[idx].to_dict()
+            st.write(f"**Score:** {score:.4f}")
+            st.json(row_data)
+
+
+
+
+
+
+
+
+
+
+
+
+
+import streamlit as st
+import pandas as pd
 import numpy as np
 import faiss
 import tempfile
