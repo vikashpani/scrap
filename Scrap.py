@@ -1,3 +1,49 @@
+import pandas as pd
+
+# Load Excel files
+active_df = pd.read_excel('active_members.xlsx')
+non_active_df = pd.read_excel('non_active_members.xlsx')
+
+# Drop duplicates (based on all columns or subset)
+active_df = active_df.drop_duplicates()
+non_active_df = non_active_df.drop_duplicates()
+
+# Create an empty list to store replacements
+replacements = []
+
+# Iterate over non-active members
+for idx, non_active in non_active_df.iterrows():
+    # Find matching active members based on Age and Gender
+    matches = active_df[
+        (active_df['Age'] == non_active['Age']) &
+        (active_df['Gender'] == non_active['Gender'])
+    ]
+    
+    if not matches.empty:
+        # If more than one match, you can choose to take all or the first
+        for _, match in matches.iterrows():
+            replacements.append({
+                'NonActiveID': non_active['MemberID'],  # or the column name in non-active
+                'ReplacementID': match['MemberID'],    # or the column name in active
+                'Age': non_active['Age'],
+                'Gender': non_active['Gender']
+            })
+
+# Convert replacements to DataFrame
+replacements_df = pd.DataFrame(replacements)
+
+# Save to Excel
+replacements_df.to_excel('replaced_members.xlsx', index=False)
+
+print("Replacement process completed. Check 'replaced_members.xlsx'.")
+
+
+
+
+
+
+
+
 
 import pandas as pd
 import faiss
