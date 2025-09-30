@@ -1,3 +1,60 @@
+
+import pandas as pd
+import numpy as np
+import faiss
+from sentence_transformers import SentenceTransformer
+import pyarrow.parquet as pq
+
+# Paths
+EXCEL_PATH = r"C:\Users\VIKASPK\Documents\Prod_claims.xlsx"
+PARQUET_PATH = "claims.parquet"
+INDEX_PATH = "claims.index"
+ID_MAP_PATH = "id_map.npy"
+TEXT_COLUMNS = ["col1", "col2", "col3"]  # change to your text columns
+
+# Step 1: Load Excel only once and save to parquet
+df = pd.read_excel(EXCEL_PATH)
+df = df.fillna("")
+df.to_parquet(PARQUET_PATH)  # much faster to reload later
+texts = df[TEXT_COLUMNS].astype(str).agg(" ".join, axis=1).tolist()
+print(f"Loaded {len(texts)} rows")
+
+# Step 2: Load embedding model
+model = SentenceTransformer("BAAI/bge-small-en")
+dim = 384
+
+# Step 3: Build FAISS index
+index = faiss.IndexFlatIP(dim)
+id_map = []
+
+# Use bigger batch size (faster)
+BATCH_SIZE = 5000
+
+for start in range(0, len(texts), BATCH_SIZE):
+    end = min(start + BATCH_SIZE, len(texts))
+    batch_texts = texts[start:end]
+    embeddings = model.encode(batch_texts, 
+                              batch_size=256,  # 👈 use larger batch
+                              normalize_embeddings=True, 
+                              show_progress_bar=True)
+    index.add(np.array(embeddings, dtype="float32"))
+    id_map.extend(range(start, end))
+    print(f"✅ Processed {start} → {end}")
+
+faiss.write_index(index, INDEX_PATH)
+np.save(ID_MAP_PATH, np.array(id_map))
+print("🎉 Index built and saved.")
+
+
+
+
+
+
+
+
+
+
+
 import streamlit as st
 import faiss
 import numpy as np
