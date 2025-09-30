@@ -1,3 +1,68 @@
+
+import pandas as pd
+import faiss
+import numpy as np
+from sentence_transformers import SentenceTransformer
+import os
+
+# === Settings ===
+EXCEL_PATH = r"C:\Users\VIKASPK\Documents\Prod_claims.xlsx"
+INDEX_FILE = r"C:\Users\VIKASPK\Documents\faiss_index.bin"
+ID_MAP_FILE = r"C:\Users\VIKASPK\Documents\id_map.npy"
+DATA_FILE = r"C:\Users\VIKASPK\Documents\claims.parquet"
+BATCH_SIZE = 10000
+
+# === Load Excel ===
+df = pd.read_excel(EXCEL_PATH)
+print(f"Loaded {len(df)} rows, columns: {df.columns.tolist()}")
+
+# === Auto-detect text + numeric columns for embeddings ===
+text_cols = df.select_dtypes(include=["object"]).columns.tolist()
+numeric_cols = df.select_dtypes(include=["int64", "float64"]).columns.tolist()
+
+print("Text columns:", text_cols)
+print("Numeric columns:", numeric_cols)
+
+# Combine all columns into one string per row
+df["combined_text"] = df[text_cols + numeric_cols].astype(str).agg(" | ".join, axis=1)
+texts = df["combined_text"].tolist()
+print(f"Prepared {len(texts)} rows for embeddings")
+
+# === Load BGE model ===
+model = SentenceTransformer("BAAI/bge-small-en")  # 384-dim
+dim = 384
+
+# === Create FAISS index ===
+index = faiss.IndexFlatIP(dim)  # cosine similarity
+id_map = []
+
+# === Batch embedding and add to FAISS ===
+for start in range(0, len(texts), BATCH_SIZE):
+    end = min(start + BATCH_SIZE, len(texts))
+    batch_texts = texts[start:end]
+    embeddings = model.encode(batch_texts, normalize_embeddings=True, batch_size=64)
+    index.add(np.array(embeddings, dtype="float32"))
+    id_map.extend(range(start, end))
+    print(f"Indexed rows {start} → {end}")
+
+# === Save index, id_map, and data ===
+faiss.write_index(index, INDEX_FILE)
+np.save(ID_MAP_FILE, np.array(id_map))
+df.to_parquet(DATA_FILE)
+print("✅ FAISS index and data saved successfully")
+
+
+
+
+
+
+
+
+
+
+
+
+
 import streamlit as st
 import pandas as pd
 import faiss
