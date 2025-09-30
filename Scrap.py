@@ -1,3 +1,86 @@
+import streamlit as st
+import faiss
+import numpy as np
+import pandas as pd
+from sentence_transformers import SentenceTransformer
+import time
+
+# === Load Model, Index, Data ===
+st.title("Excel Hybrid Semantic Search (FAISS + Filters)")
+
+model = SentenceTransformer("BAAI/bge-small-en")
+index = faiss.read_index("claims.index")
+id_map = np.load("id_map.npy")
+df = pd.read_parquet("claims.parquet")
+
+st.success(f"✅ Loaded {len(df)} rows with FAISS index")
+
+# === User Inputs ===
+query = st.text_input("Enter your search query:")
+top_k = st.slider("Top K results", 1, 20, 10)
+
+# Optional filters
+st.subheader("Filters (optional)")
+member_id = st.text_input("Filter by MemberID (leave empty for all)")
+min_amount = st.number_input("Minimum Amount", min_value=0, value=0)
+max_amount = st.number_input("Maximum Amount", min_value=0, value=1000000)
+
+if query:
+    start = time.time()
+
+    # === Apply Filters First ===
+    filtered_df = df.copy()
+    if member_id:
+        filtered_df = filtered_df[filtered_df["MemberID"].astype(str) == member_id]
+    if "Amount" in filtered_df.columns:
+        filtered_df = filtered_df[
+            (filtered_df["Amount"].astype(float) >= min_amount) &
+            (filtered_df["Amount"].astype(float) <= max_amount)
+        ]
+
+    if filtered_df.empty:
+        st.warning("⚠️ No rows match the filters!")
+    else:
+        st.write(f"🔎 {len(filtered_df)} rows after filtering")
+
+        # === Embed Query ===
+        q_emb = model.encode([query], normalize_embeddings=True)
+        q_emb = np.array(q_emb, dtype="float32")
+
+        # === Get candidate indices from filtered subset ===
+        candidate_ids = filtered_df.index.tolist()
+        embeddings_subset = index.reconstruct_n(0, len(id_map))  # load all embeddings
+        embeddings_subset = embeddings_subset[np.isin(id_map, candidate_ids)]
+
+        # === Build temporary FAISS index for filtered set ===
+        sub_index = faiss.IndexFlatIP(embeddings_subset.shape[1])
+        sub_index.add(embeddings_subset)
+
+        # === Run Search ===
+        scores, idxs = sub_index.search(q_emb, top_k)
+
+        # Map results back to original DataFrame
+        results = []
+        for i, score in zip(idxs[0], scores[0]):
+            row = filtered_df.iloc[i].to_dict()
+            row["score"] = float(score)
+            results.append(row)
+
+        end = time.time()
+
+        # === Display ===
+        st.write(f"⏱️ Search took {end - start:.2f} seconds")
+        st.write(pd.DataFrame(results))
+
+
+
+
+
+
+
+
+
+
 import pandas as pd
 
 # Load Excel files
