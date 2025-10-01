@@ -1,5 +1,155 @@
 
 import pandas as pd
+from collections import defaultdict
+import xml.etree.ElementTree as ET
+
+# ---------------------------
+# Utility Normalization Functions
+# ---------------------------
+def normalize_value(val):
+    return str(val).strip() if val else ""
+
+def normalize_amount(val):
+    try:
+        return f"{float(val):.2f}"
+    except Exception:
+        return "0.00"
+
+def normalize_filename(fname):
+    return fname.strip().replace(" ", "_").lower() if fname else ""
+
+def normalize_date_str(date_str):
+    if not date_str or pd.isna(date_str):
+        return ""
+    try:
+        return pd.to_datetime(date_str).strftime("%Y%m%d")
+    except Exception:
+        return str(date_str)
+
+# ---------------------------
+# Excel Loader
+# ---------------------------
+def load_excel(EXCEL_FILE):
+    print("Loading Excel file:", EXCEL_FILE)
+    df = pd.read_excel(EXCEL_FILE, dtype=str).fillna("")
+
+    # Map columns automatically (adjust names to your Excel headers)
+    cols_map = {
+        "clm01": "Claim ID",
+        "member": "Member ID",
+        "startdate": "Service Dates",
+        "supplier_npi": "Supplier NPI",
+        "supplier_taxid": "Supplier Tax ID",
+        "rendering_npi": "Rendering Practitioner NPI",
+    }
+
+    # Validate required columns
+    for col in ["clm01", "member", "startdate"]:
+        if cols_map[col] not in df.columns:
+            raise SystemExit(f"ERROR: Missing column {cols_map[col]} in Excel")
+
+    excel_keys_by_file = defaultdict(list)
+
+    for _, row in df.iterrows():
+        clm01 = normalize_value(row[cols_map["clm01"]])
+        nm109 = normalize_value(row[cols_map["member"]])
+        sdate = normalize_date_str(row[cols_map["startdate"]])
+
+        supplier_npi = normalize_value(row[cols_map["supplier_npi"]])
+        supplier_taxid = normalize_value(row[cols_map["supplier_taxid"]])
+        rendering_npi = normalize_value(row[cols_map["rendering_npi"]])
+
+        # Group by claim file (or fallback to 'default')
+        clmfin = "default_claims"
+        excel_keys_by_file[clmfin].append(
+            (clm01, nm109, sdate, supplier_npi, supplier_taxid, rendering_npi)
+        )
+
+    print(f"Excel entries loaded: {sum(len(v) for v in excel_keys_by_file.values())}")
+    return excel_keys_by_file
+
+
+# ---------------------------
+# EDI Segment Parser
+# ---------------------------
+def parse_segment(seg: ET.Element, tracking_partner_id: str) -> str:
+    seg_id = seg.attrib["id"]
+    elements = [seg_id]
+
+    # dictionary to hold element values with proper position
+    element_dict = {}
+
+    # partner-specific composite separators
+    comp_symbol = {
+        "030240928": "*",
+        "332151969": "*",
+        "910842999": "*",
+        "133052274": "*",
+        "BTQBROADS": ":",
+        "FWOCR": "",
+        "474513700": ":",
+    }
+
+    symbol = comp_symbol.get(tracking_partner_id, ":")
+
+    for child in seg:
+        if child.tag == "ele":
+            # extract numeric part (position index)
+            idx_str = child.attrib["id"].replace(seg_id, "")
+            if idx_str.isdigit():
+                idx = int(idx_str)
+                element_dict[idx] = child.text or ""
+
+        elif child.tag == "comp":
+            sub_values = []
+            mainidx = None
+            for sub in child:
+                if sub.tag == "subele":
+                    mainidx = int(sub.attrib["id"].split("-")[0].replace(seg_id, ""))
+                    idx_str = sub.attrib["id"].split("-")[-1]
+                    if idx_str.isdigit():
+                        sub_values.append(sub.text or "")
+            if mainidx is not None:
+                element_dict[mainidx] = symbol.join(sub_values)
+
+    # Build elements in proper order, filling missing with ""
+    max_idx = max(element_dict.keys(), default=0)
+    for i in range(1, max_idx + 1):
+        elements.append(element_dict.get(i, ""))
+
+    return "*".join(elements) + "~"
+
+
+# ---------------------------
+# Example Usage
+# ---------------------------
+if __name__ == "__main__":
+    # Load Excel keys
+    excel_data = load_excel("claims_data.xlsx")
+    print(excel_data)
+
+    # Example EDI parsing
+    xml_str = """
+    <seg id="CLM">
+        <ele id="CLM01">12345</ele>
+        <comp id="CLM02">
+            <subele id="CLM02-1">100</subele>
+            <subele id="CLM02-2">50</subele>
+        </comp>
+    </seg>
+    """
+    seg = ET.fromstring(xml_str)
+    parsed = parse_segment(seg, "030240928")
+    print("Parsed EDI Segment:", parsed)
+
+
+
+
+
+
+
+
+import pandas as pd
 import numpy as np
 import faiss
 from sentence_transformers import SentenceTransformer
