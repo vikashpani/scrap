@@ -1,5 +1,165 @@
 
 import pandas as pd
+import xml.etree.ElementTree as ET
+from collections import defaultdict
+import os
+
+# ---------------------------
+# Utility Functions
+# ---------------------------
+def normalize_value(val):
+    return str(val).strip() if val else ""
+
+def normalize_date_str(date_str):
+    if not date_str or pd.isna(date_str):
+        return ""
+    try:
+        return pd.to_datetime(date_str).strftime("%Y%m%d")
+    except Exception:
+        return str(date_str)
+
+def get_tracking_partner_id(root: ET.Element) -> str:
+    """
+    Extract ISA06 (Sender ID) from ISA segment
+    """
+    isa_seg = root.find(".//seg[@id='ISA']")
+    if isa_seg is None:
+        return ""
+    for ele in isa_seg.findall("ele"):
+        if ele.attrib.get("id") == "ISA06":
+            return ele.text.strip()
+    return ""
+
+# ---------------------------
+# Excel Loader
+# ---------------------------
+def load_excel_keys(EXCEL_FILE):
+    print("📂 Loading Excel file:", EXCEL_FILE)
+    df = pd.read_excel(EXCEL_FILE, dtype=str).fillna("")
+
+    cols_map = {
+        "clm01": "ClaimID",
+        "member": "member_hcc_id",
+        "startdate": "StartDate",
+        "supplier_npi": "SUPPLIER_NPI",
+        "supplier_taxid": "SI_SUPPLIER_TAX",
+        "rendering_npi": "PRACTITIONER_HCC_ID",
+    }
+
+    # Validate required columns
+    for col, header in cols_map.items():
+        if header not in df.columns:
+            raise SystemExit(f"❌ ERROR: Missing required column {header} in Excel")
+
+    # Collect normalized unique keys
+    excel_keys = set()
+    for _, row in df.iterrows():
+        nm109 = normalize_value(row[cols_map["member"]])
+        sdate = normalize_date_str(row[cols_map["startdate"]])
+        supplier_npi = normalize_value(row[cols_map["supplier_npi"]])
+        supplier_taxid = normalize_value(row[cols_map["supplier_taxid"]])
+        rendering_npi = normalize_value(row[cols_map["rendering_npi"]])
+
+        key = (nm109, sdate, supplier_npi, supplier_taxid, rendering_npi)
+        excel_keys.add(key)
+
+    print(f"✅ Excel unique keys loaded: {len(excel_keys)}")
+    return excel_keys
+
+# ---------------------------
+# EDI Parser
+# ---------------------------
+def get_edi_keys(root: ET.Element, tracking_partner_id: str):
+    edi_keys = set()
+
+    # Iterate through CLM segments (claims)
+    for clm_seg in root.findall(".//seg[@id='CLM']"):
+        nm109 = ""
+        sdate = ""
+        supplier_npi = ""
+        supplier_taxid = ""
+        rendering_npi = ""
+
+        # Find Member ID (NM109)
+        nm1_seg = clm_seg.find(".//seg[@id='NM1']")
+        if nm1_seg is not None:
+            for ele in nm1_seg.findall("ele"):
+                if ele.attrib.get("id") == "NM109":
+                    nm109 = normalize_value(ele.text)
+
+        # Find Service Date (DTP03)
+        dtp_seg = clm_seg.find(".//seg[@id='DTP']")
+        if dtp_seg is not None:
+            for ele in dtp_seg.findall("ele"):
+                if ele.attrib.get("id") == "DTP03":
+                    sdate = normalize_date_str(ele.text)
+
+        # Find Supplier Info
+        supplier_seg = clm_seg.find(".//seg[@id='SUPPLIER']")
+        if supplier_seg is not None:
+            supplier_npi = normalize_value(supplier_seg.findtext("ele[@id='NPI']"))
+            supplier_taxid = normalize_value(supplier_seg.findtext("ele[@id='TAXID']"))
+
+        # Find Rendering Practitioner Info
+        rendering_seg = clm_seg.find(".//seg[@id='RENDERING']")
+        if rendering_seg is not None:
+            rendering_npi = normalize_value(rendering_seg.findtext("ele[@id='NPI']"))
+
+        key = (nm109, sdate, supplier_npi, supplier_taxid, rendering_npi)
+        edi_keys.add(key)
+
+    print(f"📑 EDI keys extracted: {len(edi_keys)} for partner {tracking_partner_id}")
+    return edi_keys
+
+# ---------------------------
+# Main Driver
+# ---------------------------
+if __name__ == "__main__":
+    # Load Excel keys
+    excel_keys = load_excel_keys("claims.xlsx")
+
+    # Folder with EDI XML files
+    edi_folder = "edi_files"
+    all_edi_keys = set()
+
+    for edi_file in os.listdir(edi_folder):
+        if not edi_file.endswith(".xml"):
+            continue
+        edi_path = os.path.join(edi_folder, edi_file)
+        print(f"\n🔍 Parsing EDI file: {edi_file}")
+
+        tree = ET.parse(edi_path)
+        root = tree.getroot()
+
+        tracking_partner_id = get_tracking_partner_id(root)
+        edi_keys = get_edi_keys(root, tracking_partner_id)
+        all_edi_keys |= edi_keys  # merge all files' keys
+
+    # Compare Excel vs EDI
+    missing_in_edi = excel_keys - all_edi_keys
+    extra_in_edi = all_edi_keys - excel_keys
+
+    print("\n📊 Comparison Results")
+    print("✅ Keys in both Excel & EDI:", len(excel_keys & all_edi_keys))
+    print("❌ Missing in EDI:", len(missing_in_edi))
+    print("⚠️ Extra in EDI:", len(extra_in_edi))
+
+    # Debug: show some missing/extra
+    if missing_in_edi:
+        print("\n❌ Sample Missing in EDI:", list(missing_in_edi)[:5])
+    if extra_in_edi:
+        print("\n⚠️ Sample Extra in EDI:", list(extra_in_edi)[:5])
+
+
+
+
+
+
+
+
+
+
+import pandas as pd
 from collections import defaultdict
 import xml.etree.ElementTree as ET
 
