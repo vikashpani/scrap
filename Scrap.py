@@ -1,3 +1,141 @@
+import os
+import streamlit as st
+import pandas as pd
+
+from pandasai import SmartDataframe
+from pandasai.llm import AzureOpenAI, OpenAI
+import requests
+
+# ------------------------------
+# Streamlit UI
+# ------------------------------
+st.set_page_config(page_title="Excel Q&A with PandasAI", layout="wide")
+
+st.title("📊 Excel Q&A using PandasAI + LLM")
+
+# Sidebar for LLM selection
+llm_choice = st.sidebar.selectbox(
+    "Choose LLM Backend",
+    ["Azure OpenAI", "Groq (LLaMA)"]
+)
+
+# Sidebar API keys
+if llm_choice == "Azure OpenAI":
+    azure_api_key = st.sidebar.text_input("Azure OpenAI API Key", type="password")
+    azure_endpoint = st.sidebar.text_input("Azure Endpoint (https://xxx.openai.azure.com/)")
+    azure_deployment = st.sidebar.text_input("Azure Deployment Name")
+    azure_api_version = st.sidebar.text_input("Azure API Version", value="2024-06-01-preview")
+
+elif llm_choice == "Groq (LLaMA)":
+    groq_api_key = st.sidebar.text_input("Groq API Key", type="password")
+    groq_model = st.sidebar.text_input("Groq Model", value="llama3-70b-8192")
+
+
+uploaded_file = st.file_uploader("📥 Upload Excel File", type=["xlsx", "xls"])
+
+if uploaded_file:
+    df = pd.read_excel(uploaded_file)
+    st.write("### Preview of Data", df.head())
+
+    query = st.text_input("🔎 Ask a question about your data:")
+
+    if st.button("Run Query") and query:
+        try:
+            # ------------------------------
+            # Setup LLM
+            # ------------------------------
+            if llm_choice == "Azure OpenAI":
+                if not azure_api_key or not azure_endpoint or not azure_deployment:
+                    st.error("⚠️ Please enter Azure API Key, Endpoint, and Deployment Name.")
+                    st.stop()
+
+                llm = AzureOpenAI(
+                    api_token=azure_api_key,
+                    azure_endpoint=azure_endpoint,
+                    deployment_name=azure_deployment,
+                    api_version=azure_api_version,
+                )
+
+            elif llm_choice == "Groq (LLaMA)":
+                if not groq_api_key:
+                    st.error("⚠️ Please enter your Groq API Key.")
+                    st.stop()
+
+                # Custom LLM wrapper for Groq (simple REST API call)
+                class GroqLLM(OpenAI):
+                    def __init__(self, api_key, model="llama3-70b-8192"):
+                        super().__init__(api_token=api_key)
+                        self.model = model
+                        self.api_key = api_key
+
+                    def call(self, prompt, context=None):
+                        headers = {"Authorization": f"Bearer {self.api_key}"}
+                        payload = {
+                            "model": self.model,
+                            "messages": [{"role": "user", "content": prompt}],
+                        }
+                        resp = requests.post(
+                            "https://api.groq.com/openai/v1/chat/completions",
+                            headers=headers,
+                            json=payload,
+                        )
+                        resp.raise_for_status()
+                        return resp.json()["choices"][0]["message"]["content"]
+
+                llm = GroqLLM(api_key=groq_api_key, model=groq_model)
+
+            # ------------------------------
+            # Run PandasAI
+            # ------------------------------
+            sdf = SmartDataframe(df, config={"llm": llm})
+            answer = sdf.chat(query)
+
+            st.success("✅ Query Answered")
+            st.write("### Result")
+            st.write(answer)
+
+            # ------------------------------
+            # Export to Excel
+            # ------------------------------
+            output_path = "pandasai_output.xlsx"
+            with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+                df.to_excel(writer, sheet_name="Original Data", index=False)
+
+                # If result is DataFrame-like, also export
+                if isinstance(answer, pd.DataFrame):
+                    answer.to_excel(writer, sheet_name="Query Result", index=False)
+                else:
+                    pd.DataFrame({"Answer": [answer]}).to_excel(
+                        writer, sheet_name="Query Result", index=False
+                    )
+
+            with open(output_path, "rb") as f:
+                st.download_button(
+                    label="⬇️ Download Result Excel",
+                    data=f,
+                    file_name="pandasai_result.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+
+        except Exception as e:
+            st.error(f"❌ Error: {str(e)}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 GROQ_API_KEY = "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"
 
 11m = ChatGroq (api_key=GROQ_API_KEY, model="meta-llama/1lama-4-maverick-17b-128e-instruct"
