@@ -1,4 +1,336 @@
 
+"""
+streamlit_pandasai_full_app.py
+
+Full Streamlit app that:
+- Loads an uploaded Excel file and lets the user pick a sheet
+- Supports two LLM backends: Azure (LangChain's AzureChatOpenAI if available, else pandasai.AzureOpenAI) and Groq (via HTTP API)
+- Uses PandasAI (PandasAI/PandasAI.PandasAI) to run natural-language queries over the DataFrame
+- Forces the LLM to return tabular results as CSV (recommended prompt technique) and parses into a DataFrame
+- Lets user preview results and download as Excel containing the original sheet and LLM result
+
+Notes:
+- Edit the env vars in your environment or paste API keys into the UI when prompted
+- Make sure the packages in requirements_txt below are installed
+
+Usage:
+  pip install -r requirements.txt
+  streamlit run streamlit_pandasai_full_app.py
+
+"""
+
+import streamlit as st
+import pandas as pd
+import os
+import io
+from datetime import datetime
+from pandasai import PandasAI
+from pandasai.llm import OpenAI as PandasAIOpenAI
+import json
+import textwrap
+import requests
+from io import StringIO
+
+st.set_page_config(page_title="PandasAI Excel Chat — Azure or Groq", layout="wide")
+st.title("PandasAI + Excel — AzureChatOpenAI or Groq (Full Code)")
+
+st.markdown(
+    """
+    Upload an Excel file, pick a sheet, ask a question in natural language, and get tabular output that you can download as an Excel file.
+
+    Implementation details:
+    - We ask the LLM to **return results in CSV only** so we can reliably parse to a DataFrame.
+    - Backends supported: Azure (LangChain AzureChatOpenAI adapter or PandasAI's AzureOpenAI) and Groq (HTTP inference API).
+    """
+)
+
+# ------------------------- Sidebar: options & creds -------------------------
+with st.sidebar:
+    st.header("LLM backend & credentials")
+    backend = st.selectbox("LLM backend", ["azure_langchain", "azure_pandasai", "groq"])
+    conversational = st.checkbox("Conversational (PandasAI) mode", value=False)
+    st.markdown("**Azure**: Either use LangChain AzureChatOpenAI (preferred) or PandasAI's adapter. Provide credentials below or use env vars.")
+    if backend.startswith("azure"):
+        az_key = st.text_input("Azure OpenAI API key (leave blank to use env AZURE_OPENAI_API_KEY)", type="password")
+        az_endpoint = st.text_input("Azure endpoint (e.g. https://<resource>.openai.azure.com) or leave empty to use AZURE_OPENAI_ENDPOINT env")
+        az_deployment = st.text_input("Azure deployment name (deployment for your model)", value=os.getenv("AZURE_DEPLOYMENT_NAME", ""))
+        if az_key:
+            os.environ["AZURE_OPENAI_API_KEY"] = az_key
+        if az_endpoint:
+            os.environ["AZURE_OPENAI_ENDPOINT"] = az_endpoint
+        if az_deployment:
+            os.environ["AZURE_DEPLOYMENT_NAME"] = az_deployment
+
+    if backend == "groq":
+        groq_key = st.text_input("Groq API key (leave blank to use env GROQ_API_KEY)", type="password")
+        groq_model = st.text_input("Groq model name (e.g. 'gpt-3o-mini')", value=os.getenv("GROQ_MODEL", "gpt-3o-mini"))
+        groq_endpoint = st.text_input("Groq endpoint (leave blank to use default)", value=os.getenv("GROQ_ENDPOINT", "https://api.groq.com/v1"))
+        if groq_key:
+            os.environ["GROQ_API_KEY"] = groq_key
+        if groq_model:
+            os.environ["GROQ_MODEL"] = groq_model
+        if groq_endpoint:
+            os.environ["GROQ_ENDPOINT"] = groq_endpoint
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("**Prompt tips**: ask for `CSV` only. Example: `Return rows where Age > 50 with columns ID, Name, Age, Amount as CSV with header only, no commentary.`")
+
+# ------------------------- Upload Excel -------------------------
+uploaded_file = st.file_uploader("Upload Excel (.xlsx/.xls)", type=["xlsx", "xls"])
+if uploaded_file is None:
+    st.info("Upload an Excel file to continue")
+    st.stop()
+
+# Read sheets
+try:
+    xls = pd.read_excel(uploaded_file, sheet_name=None)
+    sheet_names = list(xls.keys())
+    sheet_choice = st.selectbox("Choose sheet", sheet_names)
+    df = xls[sheet_choice].copy()
+    st.subheader("Data preview — selected sheet")
+    st.dataframe(df.head(200))
+except Exception as e:
+    st.error(f"Failed to read Excel: {e}")
+    st.stop()
+
+# ------------------------- Prompt input -------------------------
+st.markdown("---")
+prompt_user = st.text_area("Enter your question for the dataframe (be explicit: request CSV output)", height=180)
+run_btn = st.button("Run")
+
+# ------------------------- Helper: LLM wrappers -------------------------
+
+class LangChainAzureAdapter:
+    """Adapter that wraps LangChain's AzureChatOpenAI and exposes a simple .generate(prompt) method for PandasAI.
+    We import LangChain lazily so the app doesn't immediately fail if LangChain isn't installed.
+    """
+    def __init__(self, deployment_name: str = None):
+        try:
+            from langchain.chat_models import AzureChatOpenAI
+        except Exception as e:
+            raise RuntimeError("LangChain or AzureChatOpenAI not installed. Install 'langchain' and retry.")
+        self.deployment = deployment_name or os.getenv("AZURE_DEPLOYMENT_NAME")
+        self.client = AzureChatOpenAI(deployment_name=self.deployment,
+                                      openai_api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                                      openai_api_base=os.getenv("AZURE_OPENAI_ENDPOINT"),
+                                      openai_api_version=os.getenv("OPENAI_API_VERSION", "2023-12-01-preview"))
+
+    def generate(self, prompt: str):
+        # LangChain Chat model has .predict_messages or .predict — wrap simply
+        # We try several common methods depending on LangChain version.
+        try:
+            # newer versions: .predict
+            out = self.client.predict(prompt)
+            return out
+        except Exception:
+            try:
+                # older: .predict_messages
+                resp = self.client.predict_messages([{"role": "user", "content": prompt}])
+                # resp might be a ChatMessage object or str
+                return getattr(resp, "content", str(resp))
+            except Exception as e:
+                raise RuntimeError(f"Azure LangChain call failed: {e}")
+
+class PandasAIAzureAdapter:
+    """Use pandasai.llm.OpenAI (which can be configured for Azure via env vars)"""
+    def __init__(self):
+        # This adapter will be passed to PandasAI as llm param via a small wrapper exposing .run
+        self.llm = PandasAIOpenAI(deployment_name=os.getenv("AZURE_DEPLOYMENT_NAME", None))
+
+    def generate(self, prompt: str):
+        # pandasai.OpenAI instances expect to be used by PandasAI directly; but for reliability
+        # we'll call them via their text-generation interface if available.
+        try:
+            return self.llm(prompt)
+        except Exception as e:
+            # fallback: return prompt back to indicate failure
+            raise RuntimeError(f"PandasAI Azure adapter failed call: {e}")
+
+class GroqHTTPAdapter:
+    """Simple HTTP adapter to call Groq's text-completion endpoint.
+    This implementation assumes a POST JSON API at GROQ_ENDPOINT + /completions or similar.
+    You may need to adapt it to your Groq account's exact API shape.
+    """
+    def __init__(self, model=None):
+        self.api_key = os.getenv("GROQ_API_KEY")
+        if not self.api_key:
+            raise RuntimeError("GROQ_API_KEY not found in env; provide API key in sidebar")
+        self.model = model or os.getenv("GROQ_MODEL", "gpt-3o-mini")
+        self.endpoint = os.getenv("GROQ_ENDPOINT", "https://api.groq.com/v1")
+
+    def generate(self, prompt: str):
+        url = f"{self.endpoint}/completions"
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "max_tokens": 512,
+            "temperature": 0.0,
+        }
+        resp = requests.post(url, headers=headers, json=payload, timeout=60)
+        if resp.status_code != 200:
+            raise RuntimeError(f"Groq API error {resp.status_code}: {resp.text}")
+        data = resp.json()
+        # Extract text — shape depends on API; try common keys
+        if isinstance(data, dict):
+            # try multiple fallback paths
+            for k in ("text", "output", "choices"):
+                if k in data:
+                    v = data[k]
+                    if isinstance(v, list) and len(v) > 0:
+                        # choices -> choices[0].text or choices[0].output_text
+                        first = v[0]
+                        if isinstance(first, dict):
+                            return first.get("text") or first.get("output_text") or json.dumps(first)
+                        return str(first)
+                    else:
+                        return str(v)
+        return json.dumps(data)
+
+# ------------------------- Run flow -------------------------
+if run_btn:
+    if not prompt_user or not prompt_user.strip():
+        st.error("Please enter a question prompt (ask the model to return CSV).")
+        st.stop()
+
+    # Ensure the prompt asks for CSV-only output to maximize parseability
+    forced_prompt = textwrap.dedent(f"""
+    You are given a dataframe described as CSV input. Answer with CSV only (header row then rows) with no extra commentary or markdown. Columns must match those requested in the question.
+
+    QUESTION: {prompt_user}
+
+    IMPORTANT: Return **CSV only**. If there are no matching rows, return a CSV with only the header row.
+    """)
+
+    st.info("Calling LLM — this may take a few seconds depending on the backend.")
+
+    # Instantiate the chosen adapter
+    llm_adapter = None
+    try:
+        if backend == "azure_langchain":
+            llm_adapter = LangChainAzureAdapter(deployment_name=os.getenv("AZURE_DEPLOYMENT_NAME"))
+        elif backend == "azure_pandasai":
+            llm_adapter = PandasAIAzureAdapter()
+        elif backend == "groq":
+            llm_adapter = GroqHTTPAdapter(model=os.getenv("GROQ_MODEL"))
+        else:
+            st.error("Unknown backend selected")
+            st.stop()
+    except Exception as e:
+        st.error(f"Failed to prepare LLM adapter: {e}")
+        st.stop()
+
+    # Build a PandasAI instance with a small wrapper LLM object exposing .generate
+    class WrapperLLMForPandasAI:
+        def __init__(self, adapter):
+            self.adapter = adapter
+
+        def __call__(self, prompt: str, **kwargs):
+            # PandasAI may call llm(prompt)
+            return self.adapter.generate(prompt)
+
+        def generate(self, prompt: str, **kwargs):
+            return self.adapter.generate(prompt)
+
+    # Create PandasAI with the wrapper
+    pandalai_llm = WrapperLLMForPandasAI(llm_adapter)
+    p = PandasAI(llm=pandalai_llm, conversational=conversational)
+
+    # Run with a careful prompt: we attach the original df's column names to the prompt optionally
+    cols_sample = ", ".join(list(df.columns[:30]))
+    full_prompt = textwrap.dedent(f"""
+    You have access to a dataframe with columns: {cols_sample} (and more if present).
+
+    {forced_prompt}
+    """)
+
+    try:
+        # PandasAI typically expects p.run(df, prompt)
+        response = p.run(df, prompt=full_prompt)
+    except Exception as e:
+        st.error(f"PandasAI run failed: {e}")
+        st.stop()
+
+    # response might be text (CSV) or a DataFrame object depending on PandasAI
+    result_df = None
+    if isinstance(response, pd.DataFrame):
+        result_df = response
+    else:
+        # try to coerce text into dataframe — response may be a string CSV
+        resp_text = str(response)
+        # Attempt to find first line with comma and treat as CSV
+        try:
+            result_df = pd.read_csv(StringIO(resp_text))
+        except Exception:
+            # try to extract CSV block from response (in case the LLM added surrounding text)
+            import re
+            csv_match = re.search(r"(?sm)(^[\w\W]*?\n)?((?:[^
+]*,.*\n)+[^
+]*,.*)", resp_text)
+            if csv_match:
+                csv_text = csv_match.group(2)
+                try:
+                    result_df = pd.read_csv(StringIO(csv_text))
+                except Exception:
+                    # final fallback: try to parse by splitting lines and commas
+                    lines = [ln for ln in resp_text.splitlines() if "," in ln]
+                    if len(lines) >= 1:
+                        csv_text = "\n".join(lines)
+                        try:
+                            result_df = pd.read_csv(StringIO(csv_text))
+                        except Exception:
+                            result_df = None
+
+    # Show result
+    if result_df is None:
+        st.warning("Could not parse a CSV table from model output. Showing raw output below.")
+        st.subheader("Raw model output")
+        st.code(str(response))
+    else:
+        st.subheader("LLM result (parsed as DataFrame)")
+        st.dataframe(result_df.head(200))
+
+        # Prepare downloadable Excel with both sheets
+        out = io.BytesIO()
+        ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+        with pd.ExcelWriter(out, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="original")
+            result_df.to_excel(writer, index=False, sheet_name="result")
+        out.seek(0)
+        st.download_button("Download original + result as Excel", data=out, file_name=f"pandasai_result_{ts}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+# ------------------------- Requirements text -------------------------
+requirements_txt = """
+streamlit
+pandas
+pandasai
+openpyxl
+requests
+langchain  # only if you want azure_langchain option
+"""
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("Requirements (pip)")
+st.sidebar.code(requirements_txt)
+
+st.sidebar.markdown("If you want, paste small Azure/Groq keys in the sidebar fields; otherwise set env vars: AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_DEPLOYMENT_NAME, GROQ_API_KEY, GROQ_MODEL, GROQ_ENDPOINT.")
+
+# End of file
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import pandas as pd
 import xml.etree.ElementTree as ET
 from collections import defaultdict
