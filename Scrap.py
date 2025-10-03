@@ -1,3 +1,9 @@
+GROQ_API_KEY = "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"
+
+11m = ChatGroq (api_key=GROQ_API_KEY, model="meta-llama/1lama-4-maverick-17b-128e-instruct"
+
+
+
 
 """
 streamlit_pandasai_full_app.py
