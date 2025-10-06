@@ -1,4 +1,57 @@
 import os
+import shutil
+
+def load_all_files(folder, dest_folder):
+    """
+    Read all .dat files, check for unique supplier NPIs (NM1*85),
+    and copy only files with new supplier NPIs to another folder.
+    """
+    file_contents = []
+    unique_suppliers = []
+
+    # Ensure destination folder exists
+    os.makedirs(dest_folder, exist_ok=True)
+
+    for fname in os.listdir(folder):
+        if fname.lower().endswith(".dat"):
+            file_path = os.path.join(folder, fname)
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    file_contents.append(content)
+
+                # Check for NM1*85 segment
+                if "NM1*85" in content:
+                    lines = content.split("~")
+                    for line in lines:
+                        if line.startswith("NM1*85"):
+                            parts = line.split("*")
+                            supplier_npi = parts[-1].strip()
+
+                            # If this supplier NPI is new, copy file and add to list
+                            if supplier_npi not in unique_suppliers:
+                                unique_suppliers.append(supplier_npi)
+                                dest_path = os.path.join(dest_folder, fname)
+                                shutil.copy(file_path, dest_path)
+                                print(f"Copied {fname} for supplier {supplier_npi}")
+                            break  # Stop after first NM1*85 found
+
+            except Exception as e:
+                print(f"Error reading {fname}: {e}")
+                continue
+
+    return unique_suppliers, file_contents
+
+
+
+
+
+
+
+
+
+
+import os
 import streamlit as st
 import pandas as pd
 
