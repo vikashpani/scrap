@@ -1,3 +1,38 @@
+import pandas as pd
+
+def filter_matching_claims(excel1_path, excel2_path, output_path):
+    # Read both Excel files
+    df1 = pd.read_excel(excel1_path)
+    df2 = pd.read_excel(excel2_path)
+
+    # Extract the comparison columns (strip spaces and convert to string for safety)
+    col1 = df1.iloc[:, 20].astype(str).str.strip()   # Column U = index 20 (0-based)
+    col2 = df2.iloc[:, 0].astype(str).str.strip()    # Column A = index 0
+
+    # Filter rows in df1 where U value is present in df2 A column
+    matched_df = df1[col1.isin(col2)]
+
+    # Save the matched rows to a new Excel file
+    matched_df.to_excel(output_path, index=False)
+
+    print(f"✅ Matching claims saved to: {output_path}")
+    print(f"Total matched rows: {len(matched_df)}")
+
+# Example usage
+excel1 = r"C:\path\to\excel1.xlsx"
+excel2 = r"C:\path\to\excel2.xlsx"
+output = r"C:\path\to\matched_claims.xlsx"
+
+filter_matching_claims(excel1, excel2, output)
+
+
+
+
+
+
+
+
+
 import os
 import shutil
 
