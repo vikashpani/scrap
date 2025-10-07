@@ -1,4 +1,51 @@
 import pandas as pd
+import os
+from glob import glob
+
+# 📂 Path to your folder
+folder_path = r"C:\path\to\your\excel_folder"   # 🔁 change this to your folder
+
+# 🔍 Get all Excel files in the folder
+excel_files = glob(os.path.join(folder_path, "*.xlsx"))
+
+# 🧩 List to collect DataFrames
+dfs = []
+
+for file in excel_files:
+    try:
+        # Read first sheet of each file
+        df = pd.read_excel(file)
+        df["Source_File"] = os.path.basename(file)  # Optional: track source
+        dfs.append(df)
+    except Exception as e:
+        print(f"❌ Error reading {file}: {e}")
+
+# 📊 Combine all DataFrames
+if dfs:
+    combined_df = pd.concat(dfs, ignore_index=True)
+    print(f"✅ Combined {len(dfs)} files with total rows: {len(combined_df)}")
+
+    # 💾 Write to single Excel file
+    output_path = os.path.join(folder_path, "combined_output.xlsx")
+    combined_df.to_excel(output_path, index=False)
+
+    print(f"✅ Combined file saved to: {output_path}")
+else:
+    print("⚠️ No Excel files found or all failed to read.")
+
+
+
+
+
+
+
+
+
+
+
+
+
+import pandas as pd
 
 def filter_matching_claims(excel1_path, excel2_path, output_path):
     # Read both Excel files
