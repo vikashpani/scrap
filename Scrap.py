@@ -1,4 +1,57 @@
 import pandas as pd
+
+# === Step 1: Load the two Excel files ===
+excel1 = pd.read_excel("combined_output.xlsx")
+excel2 = pd.read_excel("parallel_runbook.xlsx")
+
+# Clean column names (strip spaces)
+excel1.columns = excel1.columns.str.strip()
+excel2.columns = excel2.columns.str.strip()
+
+# === Step 2: Merge on the matching columns ===
+merged = pd.merge(
+    excel2,
+    excel1,
+    how='left',
+    left_on=["Member ID", "Patient Control Number", "Total Charge Amount"],
+    right_on=["MEMBER ID", "patient Account Number", "Total Claims Charged Amount"],
+    suffixes=("_runbook", "_combined")
+)
+
+# === Step 3: Update Run2 HRP Claims # if match found ===
+merged["Run2 HRP Claims #"] = merged["Legacy Claims Number"].combine_first(merged["Run2 HRP Claims #"])
+
+# === Step 4: Collect matched rows (where Legacy Claims Number was found) ===
+matched_rows = merged[merged["Legacy Claims Number"].notna()][[
+    "unique_claim_keys_updated",
+    "PST Model Region Claims #",
+    "Run2 HRP Claims #"
+]]
+
+# === Step 5: Save updated parallel_runbook and output ===
+# Save updated parallel runbook
+updated_runbook = merged[excel2.columns]  # keep only original columns
+updated_runbook.to_excel("parallel_runbook_updated.xlsx", index=False)
+
+# Save matched info to output
+matched_rows.to_excel("output.xlsx", index=False)
+
+print("✅ Process complete!")
+print("→ Updated file: parallel_runbook_updated.xlsx")
+print("→ Output file: output.xlsx")
+
+
+
+
+
+
+
+
+
+
+
+
+import pandas as pd
 import os
 from glob import glob
 
