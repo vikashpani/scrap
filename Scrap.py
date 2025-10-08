@@ -1,3 +1,44 @@
+
+import pandas as pd
+
+# 📘 Step 1: Read your Excel file
+excel_path = r"C:\path\to\combined_output.xlsx"
+df = pd.read_excel(excel_path)
+
+# Ensure column names match exactly
+df.columns = df.columns.str.strip()  # remove any trailing spaces
+
+# 📋 Step 2: Your list of numbers
+num_list = [12345, 67890, 22222, 33333]  # 🔁 replace with your actual list
+
+# 📘 Step 3: Filter the rows where Run2 HRP # matches any number in the list
+matched_df = df[df["Run2 HRP #"].isin(num_list)][["Unique Key", "PST Model", "Run2 HRP #"]]
+
+# 📘 Step 4: Find missing numbers
+missing_numbers = [num for num in num_list if num not in df["Run2 HRP #"].values]
+
+# 📘 Step 5: Output results
+print("✅ Matching rows:")
+print(matched_df)
+
+print("\n❌ Missing numbers from the list:")
+print(missing_numbers)
+
+# Optional: Save the matching rows to a new Excel file
+output_path = r"C:\path\to\Run2_HRP_Matched_Output.xlsx"
+matched_df.to_excel(output_path, index=False)
+print(f"\n✅ Matching data saved to: {output_path}")
+
+
+
+
+
+
+
+
+
+
+
 import pandas as pd
 
 # === Step 1: Load the two Excel files ===
