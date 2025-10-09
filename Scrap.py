@@ -1,3 +1,52 @@
+import pandas as pd
+import numpy as np
+
+# Assuming MATCH is already converted to boolean
+# xl_file['MATCH'] = xl_file['MATCH'].apply(lambda x: bool(int(x)) if not pd.isna(x) else False)
+
+# Step 1: Get invalid claims
+unique_claims = xl_file.groupby('HRP_CLAIM_NO')['MATCH'].all()
+invalid_claims = unique_claims[unique_claims == False].index.to_list()
+
+# Step 2: Filter invalid rows
+invalid_rows = xl_file[xl_file['HRP_CLAIM_NO'].isin(invalid_claims)]
+
+# Step 3: Keep only critical + unmatched rows
+critical_unmatched = invalid_rows[
+    (invalid_rows['SEVERITY'].astype(str).str.lower() == 'critical') &
+    (invalid_rows['MATCH'] == False)
+]
+
+# Step 4: Identify columns that are unmatched per row
+# If you have multiple *_MATCH columns, dynamically find them
+match_cols = [col for col in critical_unmatched.columns if col != 'HRP_CLAIM_NO' and col != 'SEVERITY']
+
+def get_unmatched_fields(row):
+    return [col for col in match_cols if not row[col]]
+
+critical_unmatched['UNMATCHED_FIELDS'] = critical_unmatched.apply(get_unmatched_fields, axis=1)
+
+# Step 5: Group by claim number and aggregate
+summary = critical_unmatched.groupby('HRP_CLAIM_NO').agg({
+    'UNMATCHED_FIELDS': lambda x: list(set([item for sublist in x for item in sublist])),  # unique fields
+}).reset_index()
+
+summary['UNMATCHED_COUNT'] = summary['UNMATCHED_FIELDS'].apply(len)
+
+# Step 6: Save to Excel
+summary.to_excel("critical_unmatched_summary.xlsx", index=False)
+
+print("✅ Summary Excel created!")
+print(summary)
+
+
+
+
+
+
+
+
+
 
 import pandas as pd
 
