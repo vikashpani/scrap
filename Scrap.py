@@ -1,4 +1,35 @@
 import pandas as pd
+
+# Assuming your DataFrames are: DWH_df, claims_df, messagecodes_df
+
+# Step 1: Get unique claim numbers
+claims_unique = claims_df['HRP_CLAIM_NO'].unique()
+messagecodes_unique = messagecodes_df['hccclaimnumber'].unique()
+dwh_claims = DWH_df['HRP_CLAIM_NO'].unique()
+
+# Step 2: Find missing claims from DWH
+missing_in_dwh_from_claims = [c for c in claims_unique if c not in dwh_claims]
+missing_in_dwh_from_messages = [c for c in messagecodes_unique if c not in dwh_claims]
+
+# Step 3: Convert to DataFrame for Excel
+missing_summary = pd.DataFrame({
+    'Source': ['claims_df']*len(missing_in_dwh_from_claims) + ['messagecodes_df']*len(missing_in_dwh_from_messages),
+    'Missing_Claim': missing_in_dwh_from_claims + missing_in_dwh_from_messages
+})
+
+# Step 4: Save to Excel
+missing_summary.to_excel("missing_claims_summary.xlsx", index=False)
+
+print("✅ Missing claims summary created!")
+print(missing_summary)
+
+
+
+
+
+
+
+import pandas as pd
 import numpy as np
 
 # Assuming MATCH is already converted to boolean
