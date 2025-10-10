@@ -1,3 +1,9 @@
+DWH_df["MATCH"] = DWH_df["MATCH"].apply(lambda x: True if x == 1 or x == 1.0 else False)
+
+
+
+
+
 mask = DWH_df["FIELD_RANKING"].astype(str).str.strip().str.isdigit()
 digit_value = DWH_df.loc[mask, "FIELD_RANKING"].iloc[0] if mask.any() else None
 print(digit_value)
