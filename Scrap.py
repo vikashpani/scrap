@@ -1,3 +1,25 @@
+def get_multivalue_field(group, field_keyword):
+    """
+    Return (set of PST_VALUEs, set of HRP_VALUEs, match_flag)
+    for fields like denialReasonCode that can appear multiple times.
+    """
+    rows = group[group["FIELD_NAME"].str.lower().str.contains(field_keyword)]
+    if not rows.empty:
+        pst_values = set(str(v).strip() for v in rows["PST_VALUE"].dropna())
+        hrp_values = set(str(v).strip() for v in rows["HRP_VALUE"].dropna())
+        match_flag = pst_values == hrp_values
+        return pst_values, hrp_values, match_flag
+    return set(), set(), None
+    
+
+
+
+
+
+
+
+
+
 
 import pandas as pd
 
