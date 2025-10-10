@@ -1,3 +1,11 @@
+mask = DWH_df["FIELD_RANKING"].astype(str).str.strip().str.isdigit()
+digit_value = DWH_df.loc[mask, "FIELD_RANKING"].iloc[0] if mask.any() else None
+print(digit_value)
+
+
+
+
+
 def get_multivalue_field(group, field_keyword):
     """
     Return (set of PST_VALUEs, set of HRP_VALUEs, match_flag)
