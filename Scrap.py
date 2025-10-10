@@ -1,3 +1,10 @@
+summary = results_df.groupby("sheet").size().reset_index(name="Count")
+summary["Percentage"] = round((summary["Count"] / summary["Count"].sum()) * 100, 2)
+
+# Add total row
+summary.loc[len(summary.index)] = ["Total", summary["Count"].sum(), 100.0]
+
+
 DWH_df["MATCH"] = DWH_df["MATCH"].apply(lambda x: True if x == 1 or x == 1.0 else False)
 
 
