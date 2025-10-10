@@ -1,3 +1,144 @@
+
+import pandas as pd
+
+# --- Step 1: Read Excel files ---
+combined_df = pd.read_excel("combined_output.xlsx")  # contains FIELD_NAME, FIELD_CATEGORY
+claims_df = pd.read_excel("claims_data.xlsx")        # contains FIELD_NAME, HRP_CLAIM_NO, PST_VALUE, HRP_VALUE, MATCH, SEVERITY, FIELD_RANKING
+
+# --- Step 2: Filter severity and ranking ---
+if "FIELD_RANKING" in claims_df.columns:
+    claims_df = claims_df[
+        (claims_df["SEVERITY"].str.upper() == "CRITICAL") &
+        (claims_df["FIELD_RANKING"].astype(str).str.isdigit())
+    ]
+else:
+    claims_df = claims_df[claims_df["SEVERITY"].str.upper() == "CRITICAL"]
+
+# --- Helper functions ---
+def get_field_status(group):
+    matched = set(group.loc[group["MATCH"] == True, "FIELD_NAME"])
+    unmatched = set(group.loc[group["MATCH"] == False, "FIELD_NAME"])
+    return matched, unmatched
+
+
+def get_field_value(group, field_keyword):
+    """Return (PST_VALUE, HRP_VALUE, MATCH) for a given field name keyword."""
+    row = group[group["FIELD_NAME"].str.lower().str.contains(field_keyword)]
+    if not row.empty:
+        return (
+            str(row["PST_VALUE"].iloc[0]).strip(),
+            str(row["HRP_VALUE"].iloc[0]).strip(),
+            bool(row["MATCH"].iloc[0]),
+        )
+    return None, None, None
+
+
+def process_claim(claim_df):
+    claim_no = claim_df["HRP_CLAIM_NO"].iloc[0]
+    matched_fields, unmatched_fields = get_field_status(claim_df)
+
+    # --- Extract required field values ---
+    pst_status, hrp_status, _ = get_field_value(claim_df, "claimstatus")
+    pst_allowed, hrp_allowed, allowed_match = get_field_value(claim_df, "allowedamount")
+    pst_paid, hrp_paid, _ = get_field_value(claim_df, "paidamount")
+    pst_denial, hrp_denial, _ = get_field_value(claim_df, "denialreasoncode")
+
+    reason_codes = list(claim_df.loc[claim_df["MATCH"] == False, "HRP_VALUE"].unique())
+
+    result = {
+        "HRP_CLAIM_NO": claim_no,
+        "pst_status": pst_status,
+        "hrp_status": hrp_status,
+        "pst_allowed_amount": pst_allowed,
+        "hrp_allowed_amount": hrp_allowed,
+        "pst_paid_amount": pst_paid,
+        "hrp_paid_amount": hrp_paid,
+        "reason_codes": reason_codes,
+        "matched_fields": list(matched_fields),
+        "unmatched_fields": list(unmatched_fields),
+        "status_summary": "",
+        "sheet": ""
+    }
+
+    pst_status = str(pst_status).lower()
+    hrp_status = str(hrp_status).lower()
+
+    # --- Step 5: Decision logic ---
+    if pst_status == hrp_status:
+        # Status matched
+        if pst_status == "paid":
+            if allowed_match:
+                result["status_summary"] = "Allowed amount matched"
+            else:
+                result["status_summary"] = "Allowed amount not matched"
+            result["sheet"] = "pst_paid-hrp_paid"
+
+        elif pst_status == "denied":
+            result["status_summary"] = "Denied"
+            result["sheet"] = "pst_denied-hrp_denied"
+
+        elif pst_status == "pended":
+            if allowed_match:
+                result["status_summary"] = "Allowed amount matched"
+            else:
+                result["status_summary"] = "Allowed amount not matched"
+            result["sheet"] = "pst_pended-hrp_pended"
+
+    else:
+        # Status mismatched
+        if pst_status == "paid" and hrp_status == "denied":
+            result["status_summary"] = "Paid vs Denied"
+            result["sheet"] = "pst_paid-hrp_denied"
+
+        elif pst_status == "paid" and hrp_status == "pended":
+            result["status_summary"] = "Paid vs Pended"
+            result["sheet"] = "pst_paid-hrp_pended"
+
+        elif pst_status == "denied" and hrp_status == "paid":
+            result["status_summary"] = "Denied vs Paid"
+            result["sheet"] = "pst_denied-hrp_paid"
+
+        elif pst_status == "denied" and hrp_status == "pended":
+            result["status_summary"] = "Denied vs Pended"
+            result["sheet"] = "pst_denied-hrp_pended"
+
+        elif pst_status == "pended" and hrp_status == "paid":
+            result["status_summary"] = "Pended vs Paid"
+            result["sheet"] = "pst_pended-hrp_paid"
+
+        elif pst_status == "pended" and hrp_status == "denied":
+            result["status_summary"] = "Pended vs Denied"
+            result["sheet"] = "pst_pended-hrp_denied"
+
+    return result
+
+
+# --- Step 6: Apply to all claims ---
+results = []
+for claim_no, group in claims_df.groupby("HRP_CLAIM_NO"):
+    processed = process_claim(group)
+    if processed:
+        results.append(processed)
+
+results_df = pd.DataFrame(results)
+
+# --- Step 7: Save to Excel with multiple sheets ---
+with pd.ExcelWriter("claim_analysis_output.xlsx") as writer:
+    for sheet, sub_df in results_df.groupby("sheet"):
+        sub_df.to_excel(writer, sheet_name=sheet[:30], index=False)
+
+print("✅ Processing completed. Output saved as 'claim_analysis_output.xlsx'")
+
+
+
+
+
+
+
+
+
+
+
 import pandas as pd
 
 # Assuming your DataFrames are: DWH_df, claims_df, messagecodes_df
