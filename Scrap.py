@@ -1,3 +1,17 @@
+fig = px.imshow(
+        confusion_percent,
+        text_auto=".1f",
+        color_continuous_scale="Blues",
+        labels=dict(x="HRP Status", y="PST Status", color="Percentage (%)"),
+        title="Confusion Matrix Heatmap (PST vs HRP)",
+    )
+    fig.update_xaxes(side="top")
+    st.plotly_chart(fig, use_container_width=True)
+
+
+
+
+
 import pandas as pd
 import streamlit as st
 
