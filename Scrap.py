@@ -1,3 +1,134 @@
+import pandas as pd
+import streamlit as st
+
+# -------------------------------
+# STEP 1: Load Excel
+# -------------------------------
+uploaded_file = st.file_uploader("Upload Claims Excel", type=["xlsx", "xls", "csv"])
+if uploaded_file:
+    df = pd.read_excel(uploaded_file)
+
+    # Normalize column names
+    df.columns = df.columns.str.strip().str.upper()
+
+    # Expected columns (adjust if your Excel uses slightly different names)
+    required_cols = ["HRP_CLAIM_NO", "PST_STATUS", "HRP_STATUS", "UNMATCHED_FIELDS", "SUMMARY_MATCH"]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        st.error(f"Missing columns: {missing}")
+        st.stop()
+
+    # -------------------------------
+    # STEP 2: Compute Total Claims
+    # -------------------------------
+    total_claims = df["HRP_CLAIM_NO"].nunique()
+
+    # -------------------------------
+    # STEP 3: Define Good Claim Logic
+    # -------------------------------
+    def is_good_claim(row):
+        pst_status = str(row["PST_STATUS"]).lower().strip()
+        hrp_status = str(row["HRP_STATUS"]).lower().strip()
+        unmatched = str(row["UNMATCHED_FIELDS"]).lower().strip()
+        summary = str(row["SUMMARY_MATCH"]).lower().strip()
+
+        # Condition 1: Both paid, unmatched fields empty, and allowed amount matched
+        if pst_status == "paid" and hrp_status == "paid":
+            if unmatched in ["", "{}", "set()", "[]"] and "allowed amount matched" in summary:
+                return True
+
+        # Condition 2: PST pended and HRP paid, only claimstatus or claimlevelstatus mismatched
+        if pst_status == "pended" and hrp_status == "paid":
+            if "claimstatus" in unmatched or "claimlevelstatus" in unmatched:
+                return True
+
+        # Condition 3: PST denied and HRP paid
+        if pst_status == "denied" and hrp_status == "paid":
+            return True
+
+        return False
+
+    df["GOOD_CLAIM"] = df.apply(is_good_claim, axis=1)
+
+    # -------------------------------
+    # STEP 4: Summary Counts
+    # -------------------------------
+    good_claims_count = df["GOOD_CLAIM"].sum()
+    bad_claims_count = total_claims - good_claims_count
+    good_claim_percentage = round((good_claims_count / total_claims) * 100, 2)
+
+    # -------------------------------
+    # STEP 5: Confusion Matrix
+    # -------------------------------
+    confusion = (
+        df.groupby(["PST_STATUS", "HRP_STATUS"])
+        .size()
+        .reset_index(name="Count")
+        .pivot(index="PST_STATUS", columns="HRP_STATUS", values="Count")
+        .fillna(0)
+    )
+
+    # Compute percentages
+    confusion_percent = confusion / confusion.values.sum() * 100
+    confusion_display = confusion.copy()
+    for c in confusion.columns:
+        confusion_display[c] = confusion[c].astype(int).astype(str) + " (" + confusion_percent[c].round(1).astype(str) + "%)"
+
+    # -------------------------------
+    # STEP 6: Dashboard UI
+    # -------------------------------
+    st.title("Claims Validation Dashboard")
+
+    # KPI Cards
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total Claims", total_claims)
+    col2.metric("Good Claims", good_claims_count)
+    col3.metric("Bad Claims", bad_claims_count)
+    col4.metric("Good Claims (%)", f"{good_claim_percentage}%")
+
+    st.divider()
+
+    # Confusion Matrix
+    st.subheader("Confusion Matrix (PST vs HRP)")
+    st.dataframe(confusion_display.style.set_caption("Counts (and %) by Status"))
+
+    # Optional chart
+    st.bar_chart(
+        pd.DataFrame({
+            "Type": ["Good Claims", "Bad Claims"],
+            "Count": [good_claims_count, bad_claims_count]
+        }).set_index("Type")
+    )
+
+    st.divider()
+
+    # Detailed Good Claims
+    st.subheader("✅ Good Claims Details")
+    st.dataframe(
+        df[df["GOOD_CLAIM"] == True][
+            ["HRP_CLAIM_NO", "PST_STATUS", "HRP_STATUS", "UNMATCHED_FIELDS", "SUMMARY_MATCH"]
+        ]
+    )
+
+    # Download option
+    st.download_button(
+        "Download Good Claims as Excel",
+        data=df[df["GOOD_CLAIM"] == True].to_csv(index=False).encode("utf-8"),
+        file_name="good_claims.csv",
+        mime="text/csv",
+    )
+else:
+    st.info("Please upload your claims Excel file to begin.")
+
+
+
+
+
+
+
+
+
+
 summary = results_df.groupby("sheet").size().reset_index(name="Count")
 summary["Percentage"] = round((summary["Count"] / summary["Count"].sum()) * 100, 2)
 
