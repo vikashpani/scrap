@@ -1,3 +1,59 @@
+import pandas as pd
+
+# Step 1: Combine all sheet results into a single DataFrame
+results_df = pd.DataFrame(results)
+
+# Step 2: Save all results by sheet
+with pd.ExcelWriter("claim_analysis_output_v1.xlsx", engine="xlsxwriter") as writer:
+    for sheet, sub_df in results_df.groupby("sheet"):
+        sub_df.to_excel(writer, sheet_name=sheet[:30], index=False)
+
+    # Step 3: Create summary by sheet
+    summary = results_df.groupby("sheet").size().reset_index(name="Count")
+    summary["Percentage"] = round((summary["Count"] / summary["Count"].sum()) * 100, 2)
+    summary.loc[len(summary.index)] = ["Total", summary["Count"].sum(), 100.0]
+
+    # Step 4: Create pivot tables for PST and HRP
+    # Pivot 1: PST
+    pst_pivot = pd.pivot_table(
+        results_df,
+        values="sheet",
+        index=["PST_STATUS"],
+        columns=["Final_Status"],
+        aggfunc="count",
+        fill_value=0,
+    ).reset_index()
+
+    # Pivot 2: HRP
+    hrp_pivot = pd.pivot_table(
+        results_df,
+        values="sheet",
+        index=["HRP_STATUS"],
+        columns=["Final_Status"],
+        aggfunc="count",
+        fill_value=0,
+    ).reset_index()
+
+    # Step 5: Write everything into one sheet (side-by-side layout)
+    startrow = 0
+    summary.to_excel(writer, sheet_name="Result_Summary", index=False, startrow=startrow)
+    startrow += len(summary) + 3
+
+    worksheet = writer.sheets["Result_Summary"]
+    worksheet.write(startrow - 2, 0, "PST Pivot Summary")
+    pst_pivot.to_excel(writer, sheet_name="Result_Summary", index=False, startrow=startrow)
+    startrow += len(pst_pivot) + 4
+
+    worksheet.write(startrow - 2, 0, "HRP Pivot Summary")
+    hrp_pivot.to_excel(writer, sheet_name="Result_Summary", index=False, startrow=startrow)
+
+print("✅ Processing completed. Output saved as 'claim_analysis_output_v1.xlsx'")
+
+
+
+
+
+
 fig = px.imshow(
         confusion_percent,
         text_auto=".1f",
