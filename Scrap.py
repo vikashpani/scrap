@@ -1,5 +1,176 @@
 import pandas as pd
 
+# --- Step 1: Read Excel files ---
+combined_df = pd.read_excel("combined_output.xlsx")
+claims_df = pd.read_excel("claims_data.xlsx")
+
+# --- Step 2: Filter severity and numeric ranking ---
+if "FIELD_RANKING" in claims_df.columns:
+    claims_df = claims_df[
+        (claims_df["SEVERITY"].str.upper() == "CRITICAL") &
+        (claims_df["FIELD_RANKING"].astype(str).str.isdigit())
+    ]
+else:
+    claims_df = claims_df[claims_df["SEVERITY"].str.upper() == "CRITICAL"]
+
+# --- Step 3: Helper functions ---
+def get_field_status(group):
+    matched = set(group.loc[group["MATCH"] == True, "FIELD_NAME"])
+    unmatched = set(group.loc[group["MATCH"] == False, "FIELD_NAME"])
+    return matched, unmatched
+
+
+def get_field_value(group, field_keyword):
+    row = group[group["FIELD_NAME"].str.lower().str.contains(field_keyword)]
+    if not row.empty:
+        return (
+            str(row["PST_VALUE"].iloc[0]).strip(),
+            str(row["HRP_VALUE"].iloc[0]).strip(),
+            bool(row["MATCH"].iloc[0]),
+        )
+    return None, None, None
+
+
+def process_claim(claim_df):
+    claim_no = claim_df["HRP_CLAIM_NO"].iloc[0]
+    matched_fields, unmatched_fields = get_field_status(claim_df)
+
+    pst_status, hrp_status, _ = get_field_value(claim_df, "claimstatus")
+    pst_allowed, hrp_allowed, allowed_match = get_field_value(claim_df, "allowedamount")
+    pst_paid, hrp_paid, _ = get_field_value(claim_df, "paidamount")
+    pst_denial, hrp_denial, _ = get_field_value(claim_df, "denialreasoncode")
+
+    reason_codes = list(claim_df.loc[claim_df["MATCH"] == False, "HRP_VALUE"].unique())
+
+    result = {
+        "HRP_CLAIM_NO": claim_no,
+        "pst_status": pst_status,
+        "hrp_status": hrp_status,
+        "pst_allowed_amount": pst_allowed,
+        "hrp_allowed_amount": hrp_allowed,
+        "pst_paid_amount": pst_paid,
+        "hrp_paid_amount": hrp_paid,
+        "reason_codes": reason_codes,
+        "matched_fields": list(matched_fields),
+        "unmatched_fields": list(unmatched_fields),
+        "status_summary": "",
+        "sheet": ""
+    }
+
+    pst_status = str(pst_status).lower()
+    hrp_status = str(hrp_status).lower()
+
+    # --- Logic ---
+    if pst_status == hrp_status:
+        if pst_status == "paid":
+            result["sheet"] = "pst_paid-hrp_paid"
+            result["status_summary"] = (
+                "Allowed amount matched" if allowed_match else "Allowed amount not matched"
+            )
+        elif pst_status == "denied":
+            result["sheet"] = "pst_denied-hrp_denied"
+            result["status_summary"] = "Denied"
+        elif pst_status == "pended":
+            result["sheet"] = "pst_pended-hrp_pended"
+            result["status_summary"] = (
+                "Allowed amount matched" if allowed_match else "Allowed amount not matched"
+            )
+    else:
+        result["sheet"] = f"pst_{pst_status}-hrp_{hrp_status}"
+        result["status_summary"] = f"{pst_status.title()} vs {hrp_status.title()}"
+
+    return result
+
+
+# --- Step 4: Apply to all claims ---
+results = []
+for claim_no, group in claims_df.groupby("HRP_CLAIM_NO"):
+    processed = process_claim(group)
+    if processed:
+        results.append(processed)
+
+results_df = pd.DataFrame(results)
+
+# --- Step 5: Confusion Matrix + Summary ---
+confusion = (
+    results_df.groupby(["pst_status", "hrp_status"])
+    .size()
+    .reset_index(name="Count")
+    .pivot(index="pst_status", columns="hrp_status", values="Count")
+    .fillna(0)
+)
+
+# Calculate PST and HRP distributions
+pst_summary = results_df["pst_status"].value_counts().reset_index()
+pst_summary.columns = ["PST_STATUS", "Count"]
+
+hrp_summary = results_df["hrp_status"].value_counts().reset_index()
+hrp_summary.columns = ["HRP_STATUS", "Count"]
+
+# Calculate good claim logic
+def is_good_claim(row):
+    pst = str(row["pst_status"]).lower()
+    hrp = str(row["hrp_status"]).lower()
+    unmatched = {x.lower() for x in row["unmatched_fields"]}
+    summary = str(row["status_summary"]).lower()
+    
+    # Paid-paid
+    if pst == "paid" and hrp == "paid":
+        if (not unmatched or unmatched == {"allowedamountclaimlevel"} or "allowed amount matched" in summary):
+            return True
+    # Pended-paid
+    if pst == "pended" and hrp == "paid":
+        if unmatched.issubset({"claimstatus", "claimlevelstatus"}):
+            return True
+    # Denied-paid
+    if pst == "denied" and hrp == "paid":
+        return True
+    return False
+
+results_df["GOOD_CLAIM"] = results_df.apply(is_good_claim, axis=1)
+good_claims = results_df["GOOD_CLAIM"].sum()
+total_claims = len(results_df)
+good_claim_pct = round((good_claims / total_claims) * 100, 2)
+
+# --- Step 6: Build Enhanced Summary Sheet ---
+summary_rows = [
+    {"Metric": "Total Claims", "Count": total_claims, "Percentage": 100},
+    {"Metric": "Good Claims", "Count": good_claims, "Percentage": good_claim_pct},
+    {"Metric": "Bad Claims", "Count": total_claims - good_claims, "Percentage": 100 - good_claim_pct},
+    {},
+]
+
+summary_df = pd.DataFrame(summary_rows)
+
+# Add Confusion Matrix Below in Same Sheet (Flattened)
+conf_flat = confusion.reset_index()
+conf_flat.columns = ["PST_STATUS"] + [f"HRP_{c}" for c in conf_flat.columns[1:]]
+summary_combined = pd.concat([summary_df, conf_flat], ignore_index=True)
+
+# --- Step 7: Write to Excel ---
+with pd.ExcelWriter("claim_analysis_output.xlsx") as writer:
+    for sheet, sub_df in results_df.groupby("sheet"):
+        sub_df.to_excel(writer, sheet_name=sheet[:30], index=False)
+
+    # Confusion and summaries
+    summary_combined.to_excel(writer, sheet_name="Result_Summary", index=False)
+    pst_summary.to_excel(writer, sheet_name="PST_Summary", index=False)
+    hrp_summary.to_excel(writer, sheet_name="HRP_Summary", index=False)
+    confusion.to_excel(writer, sheet_name="Confusion_Matrix")
+
+print("✅ Processing completed. Output saved as 'claim_analysis_output.xlsx'")
+
+
+
+
+
+
+
+
+
+
+import pandas as pd
+
 # Step 1: Combine all sheet results into a single DataFrame
 results_df = pd.DataFrame(results)
 
