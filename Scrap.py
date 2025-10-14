@@ -1,3 +1,198 @@
+
+import pandas as pd
+import streamlit as st
+
+# --- Step 1: Read Excel files ---
+combined_df = pd.read_excel("combined_output.xlsx")
+claims_df = pd.read_excel("claims_data.xlsx")
+
+# --- Step 2: Filter severity and numeric ranking ---
+if "FIELD_RANKING" in claims_df.columns:
+    claims_df = claims_df[
+        (claims_df["SEVERITY"].str.upper() == "CRITICAL") &
+        (claims_df["FIELD_RANKING"].astype(str).str.isdigit())
+    ]
+else:
+    claims_df = claims_df[claims_df["SEVERITY"].str.upper() == "CRITICAL"]
+
+# --- Step 3: Helper functions ---
+def get_field_status(group):
+    matched = set(group.loc[group["MATCH"] == True, "FIELD_NAME"])
+    unmatched = set(group.loc[group["MATCH"] == False, "FIELD_NAME"])
+    return matched, unmatched
+
+
+def get_field_value(group, field_keyword):
+    row = group[group["FIELD_NAME"].str.lower().str.contains(field_keyword)]
+    if not row.empty:
+        return (
+            str(row["PST_VALUE"].iloc[0]).strip(),
+            str(row["HRP_VALUE"].iloc[0]).strip(),
+            bool(row["MATCH"].iloc[0]),
+        )
+    return None, None, None
+
+
+def process_claim(claim_df):
+    claim_no = claim_df["HRP_CLAIM_NO"].iloc[0]
+    matched_fields, unmatched_fields = get_field_status(claim_df)
+
+    pst_status, hrp_status, _ = get_field_value(claim_df, "claimstatus")
+    pst_allowed, hrp_allowed, allowed_match = get_field_value(claim_df, "allowedamount")
+    pst_paid, hrp_paid, _ = get_field_value(claim_df, "paidamount")
+    pst_denial, hrp_denial, _ = get_field_value(claim_df, "denialreasoncode")
+
+    reason_codes = list(claim_df.loc[claim_df["MATCH"] == False, "HRP_VALUE"].unique())
+
+    result = {
+        "HRP_CLAIM_NO": claim_no,
+        "pst_status": pst_status,
+        "hrp_status": hrp_status,
+        "pst_allowed_amount": pst_allowed,
+        "hrp_allowed_amount": hrp_allowed,
+        "pst_paid_amount": pst_paid,
+        "hrp_paid_amount": hrp_paid,
+        "reason_codes": reason_codes,
+        "matched_fields": list(matched_fields),
+        "unmatched_fields": list(unmatched_fields),
+        "status_summary": "",
+        "sheet": ""
+    }
+
+    pst_status = str(pst_status).lower()
+    hrp_status = str(hrp_status).lower()
+
+    # --- Logic ---
+    if pst_status == hrp_status:
+        if pst_status == "paid":
+            result["sheet"] = "pst_paid-hrp_paid"
+            result["status_summary"] = (
+                "Allowed amount matched" if allowed_match else "Allowed amount not matched"
+            )
+        elif pst_status == "denied":
+            result["sheet"] = "pst_denied-hrp_denied"
+            result["status_summary"] = "Denied"
+        elif pst_status == "pended":
+            result["sheet"] = "pst_pended-hrp_pended"
+            result["status_summary"] = (
+                "Allowed amount matched" if allowed_match else "Allowed amount not matched"
+            )
+    else:
+        result["sheet"] = f"pst_{pst_status}-hrp_{hrp_status}"
+        result["status_summary"] = f"{pst_status.title()} vs {hrp_status.title()}"
+
+    return result
+
+
+# --- Step 4: Apply to all claims ---
+results = []
+for claim_no, group in claims_df.groupby("HRP_CLAIM_NO"):
+    processed = process_claim(group)
+    if processed:
+        results.append(processed)
+
+results_df = pd.DataFrame(results)
+
+# --- Step 5: Confusion Matrix + Summary ---
+confusion = (
+    results_df.groupby(["pst_status", "hrp_status"])
+    .size()
+    .reset_index(name="Count")
+    .pivot(index="pst_status", columns="hrp_status", values="Count")
+    .fillna(0)
+)
+
+# Calculate PST and HRP distributions
+pst_summary = results_df["pst_status"].value_counts().reset_index()
+pst_summary.columns = ["PST_STATUS", "Count"]
+
+hrp_summary = results_df["hrp_status"].value_counts().reset_index()
+hrp_summary.columns = ["HRP_STATUS", "Count"]
+
+# Calculate good claim logic
+def is_good_claim(row):
+    pst = str(row["pst_status"]).lower()
+    hrp = str(row["hrp_status"]).lower()
+    unmatched = {x.lower() for x in row["unmatched_fields"]}
+    summary = str(row["status_summary"]).lower()
+    
+    # Paid-paid
+    if pst == "paid" and hrp == "paid":
+        if (not unmatched or unmatched == {"allowedamountclaimlevel"} or "allowed amount matched" in summary):
+            return True
+    # Pended-paid
+    if pst == "pended" and hrp == "paid":
+        if unmatched.issubset({"claimstatus", "claimlevelstatus"}):
+            return True
+    # Denied-paid
+    if pst == "denied" and hrp == "paid":
+        return True
+    return False
+
+results_df["GOOD_CLAIM"] = results_df.apply(is_good_claim, axis=1)
+good_claims = results_df["GOOD_CLAIM"].sum()
+total_claims = len(results_df)
+good_claim_pct = round((good_claims / total_claims) * 100, 2)
+
+# --- Step 6: Streamlit Frontend ---
+st.title("Claim Analysis Dashboard")
+st.subheader("Pivot Summary with Drill-Down")
+
+# Build pivot-like summary
+pivot_summary = results_df.groupby(["pst_status", "hrp_status"]).size().reset_index(name="Count")
+
+# Display summary table with clickable counts
+for _, row in pivot_summary.iterrows():
+    col1, col2, col3 = st.columns([2, 2, 1])
+    with col1:
+        st.write(f"**PST:** {row['pst_status']}")
+    with col2:
+        st.write(f"**HRP:** {row['hrp_status']}")
+    with col3:
+        if st.button(f"{int(row['Count'])}", key=f"{row['pst_status']}-{row['hrp_status']}"):
+            st.session_state["selected_pst"] = row["pst_status"]
+            st.session_state["selected_hrp"] = row["hrp_status"]
+
+# Show popup modal for filtered claims
+if "selected_pst" in st.session_state and "selected_hrp" in st.session_state:
+    pst = st.session_state["selected_pst"]
+    hrp = st.session_state["selected_hrp"]
+    filtered_df = results_df[(results_df["pst_status"] == pst) & (results_df["hrp_status"] == hrp)]
+
+    with st.modal(f"Filtered Claims: PST={pst} | HRP={hrp}"):
+        st.write(f"### Showing {len(filtered_df)} claims for {pst}-{hrp}")
+        st.dataframe(filtered_df, use_container_width=True)
+
+        # CSV download
+        csv_data = filtered_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label=f"Download {pst}-{hrp} claims as CSV",
+            data=csv_data,
+            file_name=f"{pst}_{hrp}_claims.csv",
+            mime="text/csv"
+        )
+
+        if st.button("Close"):
+            del st.session_state["selected_pst"]
+            del st.session_state["selected_hrp"]
+            st.rerun()
+
+st.write("---")
+st.subheader("Good vs Bad Claims Summary")
+st.metric("Total Claims", total_claims)
+st.metric("Good Claims", good_claims)
+st.metric("Good Claim %", f"{good_claim_pct}%")
+
+st.success("✅ Dashboard loaded successfully")
+
+
+
+
+
+
+
+
+
 import pandas as pd
 import win32com.client as win32
 import os
