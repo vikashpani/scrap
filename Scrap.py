@@ -1,3 +1,76 @@
+import os
+import xml.etree.ElementTree as ET
+import pandas as pd
+
+def get_seg_ele(loop, seg_id, ele_id):
+    """
+    Helper function to safely get element value from a segment inside a loop.
+    """
+    seg = loop.find(f".//seg[@id='{seg_id}']")
+    if seg is not None:
+        ele = seg.find(f".//ele[@id='{ele_id}']")
+        if ele is not None and ele.text:
+            return ele.text.strip()
+    return None
+
+def extract_nm109_from_xml(xml_path):
+    """
+    Extract all NM109 (Member ID) values from given XML file.
+    """
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
+    data = []
+
+    for st_loop in root.findall(".//loop[@id='ST_LOOP']"):
+        for loop2000a in st_loop.findall(".//loop[@id='2000A']"):
+            for loop2000b in loop2000a.findall(".//loop[@id='2000B']"):
+                nm109 = get_seg_ele(loop2000b, "NM1", "NM109")
+                if nm109:
+                    data.append({
+                        "Filename": os.path.basename(xml_path),
+                        "MemberID": nm109
+                    })
+    return data
+
+
+def process_all_xml(input_folder, output_excel):
+    """
+    Go through all XML files in folder, extract NM109, and write to Excel.
+    """
+    all_data = []
+
+    for filename in os.listdir(input_folder):
+        if filename.lower().endswith(".xml"):
+            file_path = os.path.join(input_folder, filename)
+            file_data = extract_nm109_from_xml(file_path)
+            all_data.extend(file_data)
+            print(f"Processed: {filename} ({len(file_data)} members)")
+
+    if all_data:
+        df = pd.DataFrame(all_data)
+        df.to_excel(output_excel, index=False)
+        print(f"\n✅ Excel file created: {output_excel}")
+    else:
+        print("No NM109 values found in any file.")
+
+
+# ----------------------------
+# Example usage
+# ----------------------------
+if __name__ == "__main__":
+    input_folder = "source_xmls"        # folder with XML files
+    output_excel = "nm109_members.xlsx" # output Excel file
+    process_all_xml(input_folder, output_excel)
+
+
+
+
+
+
+
+
+
+
 
 import pandas as pd
 import streamlit as st
