@@ -1,4 +1,77 @@
 import os
+import pandas as pd
+import xml.etree.ElementTree as ET
+
+# --- helper (adjust to your environment) ---
+from your_module import change_file_into_segment_list, load_edi_segments_as_xml_obj
+# Replace `your_module` with the actual file/module where these functions are defined.
+
+def get_seg_ele(loop, seg_id, ele_id):
+    """Get element value from a given segment inside loop."""
+    seg = loop.find(f".//seg[@id='{seg_id}']")
+    if seg is not None:
+        ele = seg.find(f".//ele[@id='{ele_id}']")
+        if ele is not None and ele.text:
+            return ele.text.strip()
+    return None
+
+def extract_nm109_from_root(root, filename):
+    """
+    Extract all NM109 (Member ID) from parsed EDI rootnode.
+    """
+    data = []
+    for st_loop in root.findall(".//loop[@id='ST_LOOP']"):
+        for loop2000a in st_loop.findall(".//loop[@id='2000A']"):
+            for loop2000b in loop2000a.findall(".//loop[@id='2000B']"):
+                nm109 = get_seg_ele(loop2000b, "NM1", "NM109")
+                if nm109:
+                    data.append({
+                        "Filename": filename,
+                        "MemberID": nm109
+                    })
+    return data
+
+def process_all_edi(input_folder, output_excel):
+    """
+    Parse all .DAT EDI files in the folder, extract NM109, and export to Excel.
+    """
+    all_data = []
+
+    for filename in os.listdir(input_folder):
+        if filename.lower().endswith(".dat"):
+            file_path = os.path.join(input_folder, filename)
+            try:
+                segments = change_file_into_segment_list(file_path)
+                rootnode = load_edi_segments_as_xml_obj(segments)
+                file_data = extract_nm109_from_root(rootnode, filename)
+                all_data.extend(file_data)
+                print(f"✅ Processed {filename} → {len(file_data)} NM109 found")
+            except Exception as e:
+                print(f"⚠️ Skipped {filename}: {e}")
+
+    if all_data:
+        df = pd.DataFrame(all_data)
+        df.to_excel(output_excel, index=False)
+        print(f"\n✅ Excel file created: {output_excel}")
+    else:
+        print("No NM109 values found in any .DAT files.")
+
+# -------------------------------
+# Example usage
+# -------------------------------
+if __name__ == "__main__":
+    input_folder = "edi_files"             # folder with .DAT files
+    output_excel = "member_ids_from_edi.xlsx"
+    process_all_edi(input_folder, output_excel)
+
+
+
+
+
+
+
+
+import os
 import xml.etree.ElementTree as ET
 import pandas as pd
 
