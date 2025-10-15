@@ -1,3 +1,46 @@
+import pandas as pd
+
+# --- Step 1: Read both Excel files ---
+main_df = pd.read_excel("main_file.xlsx")          # Contains Filename, MemberID
+runbook_df = pd.read_excel("parallel_runbook.xlsx") # Contains MemberID
+
+# --- Step 2: Clean and standardize ---
+main_df["MemberID"] = main_df["MemberID"].astype(str).str.strip()
+runbook_df["MemberID"] = runbook_df["MemberID"].astype(str).str.strip()
+
+# --- Step 3: Get unique Member IDs from runbook ---
+runbook_members = set(runbook_df["MemberID"].unique())
+
+# --- Step 4: Mark matched MemberIDs in main_df ---
+main_df["Is_Matched"] = main_df["MemberID"].isin(runbook_members)
+
+# --- Step 5: Group by filename and count matched members ---
+summary = (
+    main_df.groupby("Filename")
+    .agg(Matched_Member_Count=("Is_Matched", "sum"))  # count how many True per file
+    .reset_index()
+)
+
+# --- Step 6: Add total summary row ---
+total_matches = summary["Matched_Member_Count"].sum()
+summary.loc[len(summary.index)] = ["TOTAL", total_matches]
+
+# --- Step 7: Save output to Excel ---
+summary.to_excel("Matched_Member_Summary.xlsx", index=False)
+
+print("✅ Matching summary saved to 'Matched_Member_Summary.xlsx'")
+
+
+
+
+
+
+
+
+
+
+
+
 import os
 import pandas as pd
 import xml.etree.ElementTree as ET
