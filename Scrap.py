@@ -1,4 +1,17 @@
 unmatched_rows = runbook_df[
+    (~runbook_df["UniqueKey"].isin(runbook_keys)) &
+    runbook_df["UniqueKey"].notna() &
+    runbook_df["FileInInventory"].notna() &
+    (runbook_df["UniqueKey"].astype(str).str.strip() != "") &
+    (runbook_df["FileInInventory"].astype(str).str.strip() != "")
+]
+
+
+
+
+
+
+unmatched_rows = runbook_df[
     (~runbook_df["Normalized ClaimID"].astype(str).isin(runbook_keys)) &
     (runbook_df["Normalized ClaimID"].notna()) &
     (runbook_df["Normalized ClaimID"].astype(str).str.strip() != "")
