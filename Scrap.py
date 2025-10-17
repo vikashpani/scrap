@@ -1,5 +1,43 @@
 import pandas as pd
 
+# --- Step 1: Read Excel files ---
+runbook_df = pd.read_excel("runbook.xlsx")
+superset_df = pd.read_excel("superset.xlsx")
+
+# --- Step 2: Define column mapping (if column names differ) ---
+# Example: runbook column 'B' matches superset column 'A'
+column_mapping = {"A": "B"}  # {superset_col: runbook_col}
+
+# --- Step 3: Create a variable for the key column values ---
+runbook_keys = runbook_df[column_mapping["A"]].astype(str).unique().tolist()
+superset_keys = superset_df["A"].astype(str).unique().tolist()
+
+# --- Step 4: Get rows from superset not present in runbook ---
+unmatched_rows = superset_df[~superset_df["A"].astype(str).isin(runbook_keys)]
+
+# --- Step 5: (Optional) Limit to N rows if needed ---
+N = 1  # number of unmatched rows to show
+unmatched_rows = unmatched_rows.head(N)
+
+# --- Step 6: Print or save results ---
+print(unmatched_rows)
+# unmatched_rows.to_excel("unmatched_output.xlsx", index=False)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import pandas as pd
+
 # --- Step 1: Read both Excel files ---
 main_df = pd.read_excel("main_file.xlsx")          # Contains Filename, MemberID
 runbook_df = pd.read_excel("parallel_runbook.xlsx") # Contains MemberID
