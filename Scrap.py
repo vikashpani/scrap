@@ -1,3 +1,14 @@
+unmatched_rows = runbook_df[
+    (~runbook_df["Normalized ClaimID"].astype(str).isin(runbook_keys)) &
+    (runbook_df["Normalized ClaimID"].notna()) &
+    (runbook_df["Normalized ClaimID"].astype(str).str.strip() != "")
+]
+
+
+
+
+
+
 import pandas as pd
 
 # --- Step 1: Read Excel files ---
