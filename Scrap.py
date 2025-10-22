@@ -1,3 +1,9 @@
+=INDEX(Superset!D:D, MATCH(1, (Superset!A:A=A2)*(Superset!B:B=B2)*(Superset!C:C=C2), 0))
+
+
+
+
+
 unmatched_rows = runbook_df[
     (~runbook_df["UniqueKey"].isin(runbook_keys)) &
     runbook_df["UniqueKey"].notna() &
