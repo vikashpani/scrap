@@ -1,3 +1,368 @@
+
+import re
+import pandas as pd
+from pathlib import Path
+
+# -----------------------
+# CONFIG / TOLERANCES
+# -----------------------
+INPUT_PATH = r"C:\Users\VIKASPK\Documents\MPH\check\output_2110\DWH_Claim_Compare_Output_10222025.xlsx"
+INPUT_SHEET = "Sheet1"  # change if needed
+OUTPUT_FILE = "claim_analysis_output_v2.xlsx"
+
+# Amount-related fields (keywords to look up in FIELD_NAME)
+AMOUNT_FIELD_KEYWORDS = [
+    "allowedamount", "allowedamountclaimlevel",     # allowed amount / claim level
+    "paidamount", "paidamountclaimlevel",           # paid amount / claim level
+    "cobpaidamount", "cobpaidamountclaimlevel",
+    "cobbilledamount", "cobbilledamountclaimlevel",
+    # add any other amount-like field keywords here (lowercase)
+]
+
+AMOUNT_TOLERANCE = 2.0  # dollars
+
+# -----------------------
+# Helper utilities
+# -----------------------
+def normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize column names (strip, lowercase, replace spaces with underscore)."""
+    df = df.copy()
+    df.columns = [re.sub(r'\s+', '_', c.strip()).lower() for c in df.columns.astype(str)]
+    return df
+
+def to_bool_like_series(s: pd.Series) -> pd.Series:
+    """Convert 'MATCH' column to booleans robustly."""
+    def conv(v):
+        if pd.isna(v):
+            return False
+        if isinstance(v, bool):
+            return v
+        try:
+            # numeric 1, 1.0 etc.
+            if float(v) == 1.0:
+                return True
+        except Exception:
+            pass
+        val = str(v).strip().lower()
+        if val in {"1", "true", "t", "yes", "y"}:
+            return True
+        return False
+    return s.apply(conv)
+
+_amount_extract_re = re.compile(r'[-]?\d[\d,]*\.?\d*')
+
+def parse_amount_string(s):
+    """Extract a float from a string that may contain $ or commas or parentheses."""
+    if s is None or (isinstance(s, float) and pd.isna(s)):
+        return 0.0
+    if isinstance(s, (int, float)):
+        return float(s)
+    s = str(s).strip()
+    if s == "" or s.lower() in {"nan", "none"}:
+        return 0.0
+    # remove surrounding parentheses as negative marker? we'll handle '-' sign
+    # find first numeric token
+    m = _amount_extract_re.search(s.replace('(', '-').replace(')', ''))
+    if not m:
+        return 0.0
+    try:
+        num = m.group().replace(',', '')
+        return float(num)
+    except Exception:
+        return 0.0
+
+def sum_values(values):
+    """Accept iterable of values (strings / numbers) and sum parsed numeric values."""
+    total = 0.0
+    for v in values:
+        total += parse_amount_string(v)
+    return total
+
+# -----------------------
+# Field retrieval functions
+# -----------------------
+def get_field_value(group: pd.DataFrame, field_keyword: str):
+    """Return (pst_value, hrp_value, match_flag) for the first row containing field_keyword in FIELD_NAME."""
+    # case-insensitive substring search on normalized field names
+    mask = group['field_name'].str.lower().str.contains(field_keyword.lower(), na=False)
+    if not mask.any():
+        return None, None, None
+    row = group.loc[mask].iloc[0]
+    pst = row.get('pst_value', None)
+    hrp = row.get('hrp_value', None)
+    match_flag = bool(row.get('match', False))
+    return pst, hrp, match_flag
+
+def get_multivalue_field(group: pd.DataFrame, field_keyword: str):
+    """Return (set_of_pst_values, set_of_hrp_values, match_flag) for possibly multiple rows."""
+    mask = group['field_name'].str.lower().str.contains(field_keyword.lower(), na=False)
+    rows = group.loc[mask]
+    if rows.empty:
+        return set(), set(), None
+    pst_values = set(str(v).strip() for v in rows['pst_value'].dropna())
+    hrp_values = set(str(v).strip() for v in rows['hrp_value'].dropna())
+    match_flag = (pst_values == hrp_values)
+    return pst_values, hrp_values, match_flag
+
+# -----------------------
+# Claim processing
+# -----------------------
+def get_field_status(group: pd.DataFrame):
+    matched = set(group.loc[group['match'] == True, 'field_name'].astype(str).unique())
+    unmatched = set(group.loc[group['match'] == False, 'field_name'].astype(str).unique())
+    return matched, unmatched
+
+def unmatched_are_only_amounts(unmatched_fields: set):
+    """Return True if every unmatched field's name contains one of the AMOUNT keywords."""
+    if not unmatched_fields:
+        return False
+    l = [f.lower() for f in unmatched_fields]
+    # If each unmatched item contains any amount keyword -> True
+    for fname in l:
+        if not any(kw in fname for kw in AMOUNT_FIELD_KEYWORDS):
+            return False
+    return True
+
+def compute_amount_difference_for_claim(group: pd.DataFrame):
+    """Sum PST and HRP numeric values for all rows whose FIELD_NAME matches any amount keyword.
+       Return absolute difference (float)."""
+    pst_vals = []
+    hrp_vals = []
+    for kw in AMOUNT_FIELD_KEYWORDS:
+        mask = group['field_name'].str.lower().str.contains(kw, na=False)
+        if mask.any():
+            # these rows may be multi / repeated rows; take all values
+            pst_vals.extend(group.loc[mask, 'pst_value'].dropna().astype(str).tolist())
+            hrp_vals.extend(group.loc[mask, 'hrp_value'].dropna().astype(str).tolist())
+    pst_sum = sum_values(pst_vals)
+    hrp_sum = sum_values(hrp_vals)
+    return abs(pst_sum - hrp_sum), pst_sum, hrp_sum
+
+def process_claim(claim_df: pd.DataFrame):
+    claim_df = claim_df.copy()
+    claim_no = claim_df['hrp_claim_no'].iloc[0]
+    matched_fields, unmatched_fields = get_field_status(claim_df)
+
+    # Extract some common fields (using keywords)
+    pst_status, hrp_status, _ = get_field_value(claim_df, "claimstatus")
+    # Normalize statuses to strings
+    pst_status = str(pst_status).strip().lower() if pst_status is not None else "notfound"
+    hrp_status = str(hrp_status).strip().lower() if hrp_status is not None else "notfound"
+
+    # Extract sample amounts (we'll collect many in multivalue functions)
+    pst_allowed_set, hrp_allowed_set, allowed_match = get_multivalue_field(claim_df, "allowedamount")
+    # Also get paid sets
+    pst_paid_set, hrp_paid_set, paid_match = get_multivalue_field(claim_df, "paidamount")
+
+    # compute amount diff if needed
+    amount_diff, pst_amt_sum, hrp_amt_sum = compute_amount_difference_for_claim(claim_df)
+
+    result = {
+        "hrp_claim_no": claim_no,
+        "pst_status": pst_status,
+        "hrp_status": hrp_status,
+        "pst_allowed_set": list(pst_allowed_set),
+        "hrp_allowed_set": list(hrp_allowed_set),
+        "allowed_match": bool(allowed_match),
+        "pst_paid_set": list(pst_paid_set),
+        "hrp_paid_set": list(hrp_paid_set),
+        "paid_match": bool(paid_match),
+        "matched_fields": matched_fields,
+        "unmatched_fields": unmatched_fields,
+        "amount_diff": amount_diff,
+        "pst_amount_sum": pst_amt_sum,
+        "hrp_amount_sum": hrp_amt_sum,
+        "status_summary": None,
+        "sheet": None,
+        "allowed_good_claim": False,  # will compute below
+        "good_claim": False,          # will compute below
+    }
+
+    # --- Decision logic simplified & robust ---
+    # If statuses match:
+    if pst_status == hrp_status:
+        # status matched branch
+        if pst_status == "paid":
+            result["status_summary"] = "Paid"
+            result["sheet"] = "pst_paid-hrp_paid"
+            # if allowed_match or paid_match treat as allowed matched, else flagged
+            if allowed_match or paid_match:
+                pass
+        elif pst_status == "denied":
+            result["status_summary"] = "Denied"
+            result["sheet"] = "pst_denied-hrp_denied"
+        elif pst_status == "pended":
+            result["status_summary"] = "Pended"
+            result["sheet"] = "pst_pended-hrp_pended"
+        else:
+            result["status_summary"] = "Status Matched - other"
+            result["sheet"] = "pst_matched_other"
+    else:
+        # status mismatch branch
+        pair = f"{pst_status}_vs_{hrp_status}"
+        # Some common combos to label
+        if pst_status == "paid" and hrp_status == "denied":
+            result["status_summary"] = "Paid vs Denied"
+            result["sheet"] = "pst_paid-hrp_denied"
+        elif pst_status == "paid" and hrp_status == "pended":
+            result["status_summary"] = "Paid vs Pended"
+            result["sheet"] = "pst_paid-hrp_pended"
+        elif pst_status == "denied" and hrp_status == "paid":
+            result["status_summary"] = "Denied vs Paid"
+            result["sheet"] = "pst_denied-hrp_paid"
+        elif pst_status == "denied" and hrp_status == "pended":
+            result["status_summary"] = "Denied vs Pended"
+            result["sheet"] = "pst_denied-hrp_pended"
+        elif pst_status == "pended" and hrp_status == "paid":
+            result["status_summary"] = "Pended vs Paid"
+            result["sheet"] = "pst_pended-hrp_paid"
+        elif pst_status == "pended" and hrp_status == "denied":
+            result["status_summary"] = "Pended vs Denied"
+            result["sheet"] = "pst_pended-hrp_denied"
+        else:
+            result["status_summary"] = "Status Mismatch"
+            result["sheet"] = "status_mismatch"
+
+    # --- Good claim logic ---
+    # 1) If no unmatched fields => good claim
+    if not unmatched_fields:
+        result["good_claim"] = True
+    else:
+        # 2) If statuses match (e.g., both paid) and unmatched fields are only amount fields and diff < tolerance -> good
+        if pst_status == hrp_status and unmatched_are_only_amounts(unmatched_fields) and result["amount_diff"] < AMOUNT_TOLERANCE:
+            result["good_claim"] = True
+
+    # --- Allowed_Good_Claim logic: this was not working previously.
+    # Define Allowed_Good_Claim as: unmatched fields are only amount-related AND the absolute difference of amounts < tolerance
+    if unmatched_are_only_amounts(unmatched_fields) and result["amount_diff"] < AMOUNT_TOLERANCE:
+        result["allowed_good_claim"] = True
+
+    return result
+
+# -----------------------
+# Main flow
+# -----------------------
+def main():
+    # Load
+    if not Path(INPUT_PATH).exists():
+        raise FileNotFoundError(f"Input file not found: {INPUT_PATH}")
+
+    claims_df = pd.read_excel(INPUT_PATH, sheet_name=INPUT_SHEET)
+    claims_df = normalize_cols(claims_df)
+
+    # We expect certain columns; try to map if variants exist
+    # Required: field_name, hrp_claim_no, pst_value, hrp_value, match, severity, field_ranking (optional)
+    col_map = {}
+    for expected in ["field_name", "hrp_claim_no", "pst_value", "hrp_value", "match", "severity", "field_ranking"]:
+        if expected in claims_df.columns:
+            col_map[expected] = expected
+        else:
+            # try some tolerant matches
+            for c in claims_df.columns:
+                if expected.replace("_", "") == c.replace("_", ""):
+                    col_map[expected] = c
+                    break
+    # if any required missing, raise
+    for req in ["field_name", "hrp_claim_no", "pst_value", "hrp_value", "match"]:
+        if req not in col_map:
+            raise KeyError(f"Required column not found in input (tried normalized names). Missing: {req}")
+
+    # Rename to canonical names for ease
+    claims_df = claims_df.rename(columns={col_map[k]: k for k in col_map})
+
+    # Convert MATCH to boolean
+    claims_df['match'] = to_bool_like_series(claims_df['match'])
+
+    # Step: filter severity & field_ranking if present (as per your original)
+    if 'field_ranking' in claims_df.columns:
+        # Keep rows where SEVERITY == "CRITICAL" and FIELD_RANKING looks numeric.
+        if 'severity' in claims_df.columns:
+            mask_sev = claims_df['severity'].astype(str).str.upper() == "CRITICAL"
+        else:
+            mask_sev = True
+        mask_rank = claims_df['field_ranking'].astype(str).str.replace('.', '', regex=False).str.isdigit()
+        claims_df = claims_df[mask_sev & mask_rank]
+
+    # Group and process claims
+    results = []
+    for claim_no, group in claims_df.groupby("hrp_claim_no"):
+        processed = process_claim(group)
+        if processed:
+            results.append(processed)
+
+    results_df = pd.DataFrame(results)
+
+    # Build confusion / pivot
+    if not results_df.empty:
+        confusion = (
+            results_df.groupby(["pst_status", "hrp_status"])
+            .size()
+            .reset_index(name="Count")
+            .pivot(index="pst_status", columns="hrp_status", values="Count")
+            .fillna(0)
+        )
+    else:
+        confusion = pd.DataFrame()
+
+    # Summaries
+    total_claims = len(results_df)
+    good_claims = int(results_df["good_claim"].sum()) if not results_df.empty else 0
+    allowed_good_claims = int(results_df["allowed_good_claim"].sum()) if not results_df.empty else 0
+
+    good_claim_pct = round((good_claims / total_claims * 100), 2) if total_claims else 0.0
+    allowed_good_claim_pct = round((allowed_good_claims / total_claims * 100), 2) if total_claims else 0.0
+
+    pst_summary = results_df["pst_status"].value_counts().reset_index()
+    pst_summary.columns = ["PST_STATUS", "Count"]
+    hrp_summary = results_df["hrp_status"].value_counts().reset_index()
+    hrp_summary.columns = ["HRP_STATUS", "Count"]
+
+    # Build summary_df
+    summary_rows = [
+        {"Metric": "Total Claims", "Count": total_claims, "Percentage": 100.0},
+        {"Metric": "Good Claims", "Count": good_claims, "Percentage": good_claim_pct},
+        {"Metric": "Allowed_Good_Claims", "Count": allowed_good_claims, "Percentage": allowed_good_claim_pct},
+        {"Metric": "Bad Claims", "Count": max(0, total_claims - good_claims), "Percentage": round(100.0 - good_claim_pct, 2)},
+    ]
+    summary_df = pd.DataFrame(summary_rows)
+
+    # Flatten confusion for summary
+    if not confusion.empty:
+        conf_flat = confusion.reset_index()
+        # rename conf cols for clarity
+        conf_cols = conf_flat.columns.tolist()
+        conf_flat.columns = ["PST_STATUS"] + [f"HRP_{c}" for c in conf_cols[1:]]
+        summary_combined = pd.concat([summary_df, conf_flat], ignore_index=True, sort=False)
+    else:
+        summary_combined = summary_df
+
+    # Write output workbook with sheets grouped by 'sheet' value in results_df
+    with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
+        # write each group to separate sheet
+        if not results_df.empty:
+            for sheet, sub_df in results_df.groupby("sheet"):
+                # truncate sheet name to 31 chars (Excel limit)
+                sheet_name = str(sheet)[:31]
+                sub_df.to_excel(writer, sheet_name=sheet_name, index=False)
+        # core summary sheets
+        summary_combined.to_excel(writer, sheet_name="Result_Summary", index=False)
+        pst_summary.to_excel(writer, sheet_name="PST_Summary", index=False)
+        hrp_summary.to_excel(writer, sheet_name="HRP_Summary", index=False)
+
+    print(f"Processing completed. Output saved as '{OUTPUT_FILE}'")
+    # return results for further inspection
+    return results_df, summary_combined, confusion
+
+if __name__ == "__main__":
+    results_df, summary_combined, confusion = main()
+
+
+
+
+
+
+
+
 =INDEX(Superset!D:D, MATCH(1, (Superset!A:A=A2)*(Superset!B:B=B2)*(Superset!C:C=C2), 0))
 
 
