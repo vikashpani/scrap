@@ -1,3 +1,156 @@
+import pandas as pd
+import numpy as np
+
+# ---------------- STEP 1: Load Data ----------------
+claims_df = pd.read_excel(
+    r"C:\Users\VIKASPK\Documents\MPH\check\output_2110\DWH_Claim_Compare_Output_10222025.xlsx",
+    sheet_name="Sheet1"
+)
+
+# ---------------- STEP 2: Filter ----------------
+if "FIELD_RANKING" in claims_df.columns:
+    claims_df = claims_df[
+        (claims_df["SEVERITY"].str.upper() == "CRITICAL")
+        & (claims_df["FIELD_RANKING"].astype(str).str.replace('.', '', regex=False).str.isdigit())
+    ]
+
+claims_df["MATCH"] = claims_df["MATCH"].apply(lambda x: True if x in [1, 1.0, True] else False)
+
+# ---------------- STEP 3: Helper Functions ----------------
+def get_field_status(group):
+    matched = set(group.loc[group["MATCH"] == True, "FIELD_NAME"])
+    unmatched = set(group.loc[group["MATCH"] == False, "FIELD_NAME"])
+    return matched, unmatched
+
+
+def get_field_value(group, keyword):
+    """Return single PST_VALUE, HRP_VALUE (as string), MATCH flag."""
+    row = group[group["FIELD_NAME"].str.contains(keyword, case=False, na=False)]
+    if not row.empty:
+        return (
+            str(row["PST_VALUE"].iloc[0]).strip(),
+            str(row["HRP_VALUE"].iloc[0]).strip(),
+            bool(row["MATCH"].iloc[0])
+        )
+    return None, None, None
+
+
+def get_multivalue_field(group, keyword):
+    """Return sets of PST_VALUE, HRP_VALUE and equality flag."""
+    rows = group[group["FIELD_NAME"].str.contains(keyword, case=False, na=False)]
+    if not rows.empty:
+        pst_values = set(str(v).strip() for v in rows["PST_VALUE"].dropna())
+        hrp_values = set(str(v).strip() for v in rows["HRP_VALUE"].dropna())
+        match_flag = pst_values == hrp_values
+        return pst_values, hrp_values, match_flag
+    return set(), set(), None
+
+
+# ---------------- STEP 4: Claim-level Processing ----------------
+def process_claim(claim_df):
+    claim_no = claim_df["HRP_CLAIM_NO"].iloc[0]
+    matched_fields, unmatched_fields = get_field_status(claim_df)
+
+    # Extract key fields
+    pst_status, hrp_status, _ = get_field_value(claim_df, "claimstatus")
+
+    pst_allowed, hrp_allowed, _ = get_multivalue_field(claim_df, "allowedAmount")
+    pst_allowed_lvl, hrp_allowed_lvl, _ = get_field_value(claim_df, "allowedAmountClaimLevel")
+
+    pst_paid, hrp_paid, _ = get_multivalue_field(claim_df, "paidAmount")
+    pst_paid_lvl, hrp_paid_lvl, _ = get_field_value(claim_df, "paidAmountClaimLevel")
+
+    pst_denial, hrp_denial, _ = get_multivalue_field(claim_df, "denialReasonCodes")
+
+    result = {
+        "HRP_CLAIM_NO": claim_no,
+        "pst_status": pst_status,
+        "hrp_status": hrp_status,
+        "pst_allowed_amount": pst_allowed,
+        "hrp_allowed_amount": hrp_allowed,
+        "pst_allowed_claimlevel_amount": pst_allowed_lvl,
+        "hrp_allowed_claimlevel_amount": hrp_allowed_lvl,
+        "pst_paid_amount": pst_paid,
+        "hrp_paid_amount": hrp_paid,
+        "pst_paid_claimlevel_amount": pst_paid_lvl,
+        "hrp_paid_claimlevel_amount": hrp_paid_lvl,
+        "pst_denial_code": pst_denial,
+        "hrp_denial_code": hrp_denial,
+        "matched_fields": matched_fields,
+        "unmatched_fields": unmatched_fields,
+    }
+
+    return result
+
+
+# ---------------- STEP 5: Apply to All Claims ----------------
+results = []
+for claim_no, group in claims_df.groupby("HRP_CLAIM_NO"):
+    processed = process_claim(group)
+    results.append(processed)
+
+results_df = pd.DataFrame(results)
+
+# ---------------- STEP 6: Pairwise Difference Check ----------------
+def safe_to_float(v):
+    """Convert safely to float else return NaN."""
+    try:
+        return float(str(v).replace(',', '').replace('(', '').replace(')', '').strip())
+    except:
+        return np.nan
+
+
+def numeric_difference_ok(pst_val, hrp_val):
+    """
+    Compare numeric values between PST and HRP (handles single values and sets).
+    Returns True if all numeric differences <= 2.
+    """
+    pst_list = list(pst_val) if isinstance(pst_val, (set, list, tuple)) else [pst_val]
+    hrp_list = list(hrp_val) if isinstance(hrp_val, (set, list, tuple)) else [hrp_val]
+
+    pst_nums = [safe_to_float(x) for x in pst_list if safe_to_float(x) == safe_to_float(x)]
+    hrp_nums = [safe_to_float(x) for x in hrp_list if safe_to_float(x) == safe_to_float(x)]
+
+    if not pst_nums or not hrp_nums:
+        return True  # no numeric data to compare
+
+    # If different lengths, compare pairwise min length
+    diffs = [abs(p - h) for p, h in zip(pst_nums, hrp_nums)]
+    return all(d <= 2 for d in diffs)
+
+
+def is_good_claim(row):
+    """Claim is good if all relevant allowed fields have numeric diff <= 2 and no extra unmatched fields."""
+    allowed_fields = ["claimstatus", "claimlinestatus", "allowedAmount"]
+    unmatched = {x.lower() for x in row["unmatched_fields"]}
+    extra_unmatched = unmatched - set(allowed_fields)
+
+    allowed_ok = (
+        numeric_difference_ok(row["pst_allowed_amount"], row["hrp_allowed_amount"])
+        and numeric_difference_ok(row["pst_allowed_claimlevel_amount"], row["hrp_allowed_claimlevel_amount"])
+        and numeric_difference_ok(row["pst_paid_amount"], row["hrp_paid_amount"])
+        and numeric_difference_ok(row["pst_paid_claimlevel_amount"], row["hrp_paid_claimlevel_amount"])
+    )
+
+    return allowed_ok and not extra_unmatched
+
+
+results_df["GOOD_CLAIM"] = results_df.apply(is_good_claim, axis=1)
+
+# ---------------- STEP 7: Save Output ----------------
+results_df.to_excel("claim_analysis_with_differences.xlsx", index=False)
+print("✅ Processing completed — output saved as 'claim_analysis_with_differences.xlsx'")
+
+
+
+
+
+
+
+
+
+
+
 
 import re
 import pandas as pd
