@@ -1,3 +1,48 @@
+
+import pandas as pd
+from datetime import timedelta
+
+# --- Inputs ---
+excel_path = r"C:\Users\VIKASPK\Documents\MPH\claims.xlsx"  # your Excel file path
+claim_numbers_to_update = [12345, 67890, 11121]  # replace with your list of claim numbers
+claim_col = "ClaimNumber"         # column name for claim number
+dos_col = "StartDateOfService"    # column name for date of service
+update_col = "FormattedDOSUpdated"
+
+# --- Step 1: Read Excel ---
+df = pd.read_excel(excel_path)
+
+# --- Step 2: Ensure date column is datetime ---
+df[dos_col] = pd.to_datetime(df[dos_col], errors="coerce")
+
+# --- Step 3: Create new column (initialize blank) ---
+df[update_col] = ""
+
+# --- Step 4: Process only selected claims ---
+for idx, row in df.iterrows():
+    claim = row[claim_col]
+    dos = row[dos_col]
+
+    # Only process if claim in list and DOS is valid
+    if claim in claim_numbers_to_update and pd.notna(dos):
+        new_date = dos + timedelta(days=5)
+        formatted = new_date.strftime("%Y%m%d")  # e.g., 20240316
+        formatted = formatted[1:]  # remove first '0' from year (→ 2240316)
+        df.at[idx, update_col] = formatted
+
+# --- Step 5: Save back to same Excel ---
+df.to_excel(excel_path, index=False)
+print("✅ Updated Excel saved with column:", update_col)
+
+
+
+
+
+
+
+
+
+
 import pandas as pd
 import numpy as np
 
