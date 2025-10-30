@@ -1,3 +1,33 @@
+hrp_denial_codes = row.get("hrp_denial_code", set())
+    claim_status = str(row.get("hrp_claim_status", "")).lower()
+
+    # ✅ Convert mixed denial codes safely to string set for comparison
+    if isinstance(hrp_denial_codes, (set, list, tuple)):
+        codes = {str(code).strip() for code in hrp_denial_codes if code is not None}
+    else:
+        try:
+            codes = {str(hrp_denial_codes).strip()}
+        except Exception:
+            codes = set()
+
+    # --- Rule 1: Exclude Claims (Duplicate/Auth)
+    if "1" in codes or "160" in codes:
+        return "Exclude Claims (Duplicate/Auth)"
+
+    # --- Rule 2: Good Denial
+    # If only code 19 (numeric or string) and claim is denied
+    numeric_codes = {c for c in codes if c.isdigit()}
+    if numeric_codes == {"19"} and claim_status == "denied":
+        return "Good Denial"
+
+
+
+
+
+
+
+
+
 def numeric_difference_ok(pst_vals, hrp_vals, tolerance=2):
     """Check if all numeric differences are within tolerance."""
     if not pst_vals or not hrp_vals:
