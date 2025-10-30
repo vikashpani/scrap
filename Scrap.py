@@ -1,3 +1,89 @@
+import os
+import xml.etree.ElementTree as ET
+import pandas as pd
+
+def retrieve_edi_file_name(parallel_runbook_df, root_folder_loc, exclude_folders=None):
+    """
+    Match EDI files to claims based on patient control number, total charge amount,
+    member ID, and formatted DOS, and update the parallel_runbook_df with the file path.
+
+    Args:
+        parallel_runbook_df (pd.DataFrame): Input DataFrame with claim info.
+        root_folder_loc (str): Root folder containing EDI files.
+        exclude_folders (list[str], optional): Subfolder names to skip.
+
+    Returns:
+        pd.DataFrame: Updated DataFrame with 'edi_file_path' column.
+    """
+    if exclude_folders is None:
+        exclude_folders = []
+
+    # --- Step 1: Create unique key set from the DataFrame ---
+    key_map = {}
+    for idx, row in parallel_runbook_df.iterrows():
+        key = (
+            str(row.get("PATIENT_CONTROL_NUMBER", "")).strip(),
+            str(row.get("TOTAL_CHARGE_AMOUNT", "")).strip(),
+            str(row.get("MEMBER_ID", "")).strip(),
+            str(row.get("FormattedDOSUpdate", "")).strip(),
+        )
+        key_map[key] = idx
+
+    # Initialize column for file path
+    if "edi_file_path" not in parallel_runbook_df.columns:
+        parallel_runbook_df["edi_file_path"] = ""
+
+    # --- Step 2: Walk through all files in the root folder (recursively) ---
+    for root, dirs, files in os.walk(root_folder_loc):
+        # Exclude specific folders
+        dirs[:] = [d for d in dirs if d not in exclude_folders]
+
+        for file in files:
+            if not file.lower().endswith(".dat"):
+                continue
+
+            file_path = os.path.join(root, file)
+
+            try:
+                # Load and parse XML from file
+                tree = ET.parse(file_path)
+                root_node = tree.getroot()
+
+                # Extract claim info
+                for loop2000b in root_node.findall(".//loop[@id='2000B']"):
+                    for loop2300 in loop2000b.findall(".//loop[@id='2300']"):
+
+                        nm109 = get_seg_ele(loop2000b, "NM1", "109") or \
+                                get_seg_ele(loop2000b, "NM1", "188") or ""
+
+                        clm01 = get_seg_ele(loop2300, "CLM", "CLM01") or ""
+                        clm02 = get_seg_ele(loop2300, "CLM", "CLM02") or ""
+                        dtp472 = get_dtp_start_date(loop2300, "472") or ""
+                        dtp434 = get_dtp_start_date(loop2300, "434") or ""
+
+                        formatted_dos = normalize_date_str(dtp472 or dtp434)
+                        total_charge = normalize_amount(clm02)
+                        member_id = normalize_value(nm109)
+                        patient_ctrl_no = normalize_value(clm01)
+
+                        claim_key = (patient_ctrl_no, total_charge, member_id, formatted_dos)
+
+                        # Match with DataFrame key
+                        if claim_key in key_map:
+                            idx = key_map[claim_key]
+                            parallel_runbook_df.at[idx, "edi_file_path"] = file_path
+
+            except Exception as e:
+                print(f"⚠️ Error reading file {file_path}: {e}")
+                continue
+
+    return parallel_runbook_df
+
+
+
+
+
+
 # Get total claims
 total_claims = len(results_df)
 
