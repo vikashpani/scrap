@@ -1,3 +1,85 @@
+def numeric_difference_ok(pst_vals, hrp_vals, tolerance=2):
+    """Check if all numeric differences are within tolerance."""
+    if not pst_vals or not hrp_vals:
+        return False
+    try:
+        diffs = [abs(float(p) - float(h)) for p, h in zip(pst_vals, hrp_vals)]
+        return all(d <= tolerance for d in diffs)
+    except Exception:
+        return False
+
+
+def classify_claim(row):
+    """
+    Classify claims into:
+    - Good Claim
+    - Allowed Good Claim
+    - Difference Allowed Claim
+    - Bad Claim
+    """
+    unmatched = {x.lower() for x in row.get("unmatched_fields", [])}
+
+    # 1️⃣ Good Claim — perfect match
+    if not unmatched:
+        return "Good Claim"
+
+    # 2️⃣ Allowed Good Claim — only claimstatus/claimlinestatus differ
+    if unmatched.issubset({"claimstatus", "claimlinestatus"}):
+        pst_status = str(row.get("pst_claimstatus", "")).lower()
+        hrp_status = str(row.get("hrp_claimstatus", "")).lower()
+
+        if pst_status == "pended" and hrp_status == "paid":
+            return "Bad Claim"
+        return "Allowed Good Claim"
+
+    # 3️⃣ Difference Allowed Claim — numeric diffs ≤ 2 and only allowed amount fields unmatched
+    amt_fields = [
+        "allowedamount",
+        "allowedamountclaimlevel",
+        "paidamount",
+        "paidamountclaimlevel",
+        "cobpaidamount",
+        "cobpaidamountclaimlevel",
+        "cobbilledamount",
+        "cobbilledamountclaimlevel",
+    ]
+
+    # Pair of field names from the row
+    amt_field_pairs = [
+        ("pst_allowed_amount", "hrp_allowed_amount"),
+        ("pst_allowed_claimlevel_amount", "hrp_allowed_claimlevel_amount"),
+        ("pst_paid_amount", "hrp_paid_amount"),
+        ("pst_paid_claim_level_amount", "hrp_paid_claim_level_amount"),
+        ("pst_cob_paid_amount", "hrp_cob_paid_amount"),
+        ("pst_cob_paid_claimlevel_amount", "hrp_cob_paid_claimlevel_amount"),
+        ("pst_cob_billed_amount", "hrp_cob_billed_amount"),
+        ("pst_cob_billed_claimlevel_amount", "hrp_cob_billed_claimlevel_amount"),
+    ]
+
+    diff_ok = []
+    for pst_field, hrp_field in amt_field_pairs:
+        pst_val = row.get(pst_field)
+        hrp_val = row.get(hrp_field)
+        diff_ok.append(numeric_difference_ok(pst_val, hrp_val))
+
+    all_amounts_ok = all(diff_ok)
+
+    # ✅ New condition: unmatched fields must be subset of amount fields
+    if all_amounts_ok and unmatched.issubset(amt_fields):
+        return "Difference Allowed Claim"
+
+    # 4️⃣ Else — Bad Claim
+    return "Bad Claim"
+
+
+
+
+
+
+
+
+
+
 
 import pandas as pd
 from datetime import timedelta
