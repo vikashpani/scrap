@@ -1,3 +1,34 @@
+# Get total claims
+total_claims = len(results_df)
+
+# Get counts for each claim category
+category_counts = results_df["Claims_Category"].value_counts(dropna=False)
+
+# Build summary dynamically
+summary_rows = []
+
+for category, count in category_counts.items():
+    percentage = round((count / total_claims) * 100, 2)
+    summary_rows.append({
+        "Metric": category,
+        "Count": count,
+        "Percentage": percentage
+    })
+
+# Add total row at the end
+summary_rows.append({
+    "Metric": "Total Claims",
+    "Count": total_claims,
+    "Percentage": 100.0
+})
+
+summary_rows
+
+
+
+
+
+
 hrp_denial_codes = row.get("hrp_denial_code", set())
     claim_status = str(row.get("hrp_claim_status", "")).lower()
 
