@@ -1,4 +1,115 @@
 import os
+import re
+import pyodbc
+import pandas as pd
+
+
+# -----------------------------------------------------------
+# ✅ STEP 1: READ CLAIM IDS FROM EXCEL
+# -----------------------------------------------------------
+claim_excel_path = r"C:\path\to\claim_ids.xlsx"
+df_claim_ids = pd.read_excel(claim_excel_path)
+
+# Ensure expected column exists
+if "CLAIM_HCC_ID" not in df_claim_ids.columns:
+    raise ValueError("CLAIM_HCC_ID column is missing in claim_ids.xlsx")
+
+claim_list = df_claim_ids["CLAIM_HCC_ID"].astype(str).tolist()
+claim_list_sql = ",".join(f"'{x}'" for x in claim_list)
+
+
+
+# -----------------------------------------------------------
+# ✅ STEP 2: READ SQL FILE AND REPLACE IN CLAUSE
+# -----------------------------------------------------------
+sql_file_path = r"C:\path\to\HRP_PREPROD_Retrive_all_Exceptions.sql"
+
+with open(sql_file_path, "r") as f:
+    sql_template = f.read()
+
+# Replace ANY IN(...) dynamically
+sql_query = re.sub(
+    r"in\s*\(.*?\)",
+    f"in ({claim_list_sql})",
+    sql_template,
+    flags=re.IGNORECASE | re.DOTALL
+)
+
+print("\n✅ SQL Query Prepared Successfully!")
+
+
+# -----------------------------------------------------------
+# ✅ STEP 3: SQL SERVER CONNECTION
+# -----------------------------------------------------------
+username = r"MHPNT\VIKASPK"
+password = "Emmrbcgr810"
+
+hrp_server = "YOUR_SERVER_NAME"
+hrp_database = "YOUR_DATABASE_NAME"
+
+driver = 'ODBC Driver 17 for SQL Server'
+
+hrp_connection_string = (
+    f'DRIVER={{{driver}}};'
+    f'SERVER={hrp_server};'
+    f'DATABASE={hrp_database};'
+    f'Trusted_Connection=yes;'
+)
+
+try:
+    hrp_conn = pyodbc.connect(hrp_connection_string)
+    print("✅ Connected to SQL Server PREPROD Successfully!")
+except Exception as e:
+    print("❌ Connection failed:", e)
+    raise
+
+
+
+# -----------------------------------------------------------
+# ✅ STEP 4: RUN SQL QUERY
+# -----------------------------------------------------------
+df_raw = pd.read_sql(sql_query, hrp_conn)
+print("\n✅ Raw Data Retrieved:")
+print(df_raw.head())
+
+
+
+# -----------------------------------------------------------
+# ✅ STEP 5: GROUP RESULTS BY CLAIM_HCC_ID
+# -----------------------------------------------------------
+df_grouped = df_raw.groupby("CLAIM_HCC_ID").agg({
+    "trigger_desc": lambda x: list(set(x)),
+    "REVIEW_REPAIR_TRIGGER_KEY": lambda x: list(set(x)),
+    "LEVEL": lambda x: list(set(x))
+}).reset_index()
+
+print("\n✅ Grouped Output Prepared:")
+print(df_grouped.head())
+
+
+
+# -----------------------------------------------------------
+# ✅ STEP 6: EXPORT TO EXCEL
+# -----------------------------------------------------------
+output_path = r"C:\path\to\final_output.xlsx"
+df_grouped.to_excel(output_path, index=False)
+
+print("\n✅ FINAL OUTPUT EXPORTED TO EXCEL:")
+print(output_path)
+
+
+
+
+
+
+
+
+
+
+
+
+
+import os
 import xml.etree.ElementTree as ET
 import pandas as pd
 
