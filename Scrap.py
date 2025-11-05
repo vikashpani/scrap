@@ -1,3 +1,233 @@
+import os
+from copy import copy
+import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
+
+# --------------------
+# CONFIG - adjust these
+# --------------------
+parallel_runbook_file_path = r"C:\path\to\parallel_runbook_template.xlsx"   # template + data source
+parallel_runbook_update_folder_loc = r"C:\path\to\output\folder"
+output_file_name = "Parallel_Runbook_Updated.xlsx"
+
+# If you want specific sheets, set this list. Otherwise set to None to process all sheets in the template.
+parallel_runbook_sheet_names = None  # e.g. ["Sheet1", "Sheet2"] or None to auto-detect
+
+# Column name variables used later in transformations (adjust to actual column names)
+pst_claim_no_col_name = "PST_CLAIM_NO"
+hrp_claim_no_col_name = "HRP_CLAIM_NO"
+unique_claim_keys_updated_col_name = "unique_claim_key"
+test_edi_file_col_name = "edi_file_path"
+pst_277CA_col_name = "PST_277CA"
+hrp_277CA_col_name = "HRP_277CA"
+pst_date_dropped_col = "PST_DATE_DROPPED"
+hrp_date_dropped_col = "HRP_DATE_DROPPED"
+hrp_claim_status_col = "HRP_STATUS"
+pst_claim_status_col = "PST_STATUS"
+# list of columns you expect in each sheet
+list_of_cols_to_update = [
+    test_edi_file_col_name,
+    "PST_NPI",
+    "PST_TIN",
+    pst_277CA_col_name,
+    hrp_277CA_col_name,
+    pst_date_dropped_col,
+    hrp_date_dropped_col,
+    hrp_claim_status_col,
+    pst_claim_status_col,
+    unique_claim_keys_updated_col_name
+]
+
+# --------------------
+# Helper (internal) functions
+# --------------------
+def safe_int_str(x):
+    """Convert numbers like 123.0 -> '123', return '' for NaN/empty."""
+    try:
+        if pd.isna(x):
+            return ""
+        # if float but integral
+        if isinstance(x, float) and x.is_integer():
+            return str(int(x))
+        return str(x).strip()
+    except Exception:
+        return ""
+
+def format_amount_two_decimals(x):
+    try:
+        if pd.isna(x) or x == "":
+            return ""
+        return f"{float(x):.2f}"
+    except Exception:
+        return str(x)
+
+def convert_binary_cols_to_true_false(df):
+    """Detect columns with only 0/1 and convert to 'TRUE'/'FALSE' strings."""
+    binary_cols = [col for col in df.columns
+                   if set(df[col].dropna().unique()).issubset({0, 1})]
+    for col in binary_cols:
+        df[col] = df[col].map({1: "TRUE", 0: "FALSE"})
+    return df
+
+# --------------------
+# Main processing loop
+# --------------------
+# 1) discover sheet names if not provided
+template_wb = load_workbook(parallel_runbook_file_path)
+all_template_sheets = template_wb.sheetnames
+if parallel_runbook_sheet_names is None:
+    parallel_runbook_sheet_names = all_template_sheets.copy()
+
+# 2) create output workbook from template but remove its first sheet (we will re-create sheets)
+final_wb = load_workbook(parallel_runbook_file_path)
+# Remove the original first sheet so we can create fresh ones (we will use template_ws for style sourcing)
+template_ws = final_wb.worksheets[0]
+del final_wb[final_wb.sheetnames[0]]
+
+# 3) iterate sheets, transform DataFrame, append to final_wb
+for sheet_name in parallel_runbook_sheet_names:
+    print(f"[INFO] Processing sheet: {sheet_name}")
+
+    # read the sheet into dataframe (use engine default)
+    try:
+        df = pd.read_excel(parallel_runbook_file_path, sheet_name=sheet_name, dtype=object)
+    except Exception as e:
+        print(f"[WARN] Could not read sheet {sheet_name}: {e} — skipping")
+        continue
+
+    # Ensure expected columns exist - fail early if any essential column missing
+    missing_cols = [c for c in list_of_cols_to_update if c not in df.columns]
+    if missing_cols:
+        print(f"[WARN] Sheet '{sheet_name}' missing expected columns: {missing_cols}. You may adjust list_of_cols_to_update.")
+        # you may choose to continue or raise; I'll continue but keep going
+        # continue
+
+    # ----------------------------
+    # Your transformations (from original script) - kept inline
+    # ----------------------------
+    # Normalize PST and HRP claim numbers (original code had buggy lambdas)
+    if pst_claim_no_col_name in df.columns:
+        df[pst_claim_no_col_name] = df[pst_claim_no_col_name].apply(safe_int_str)
+
+    if hrp_claim_no_col_name in df.columns:
+        df[hrp_claim_no_col_name] = df[hrp_claim_no_col_name].apply(safe_int_str)
+
+    # Call external retrieval functions if available (these are placeholders in your environment)
+    # retrieve_claim_numbers(unique_list, cursor, sql_path) -> should return dict mapping key->claimno
+    try:
+        unique_list = list(df[unique_claim_keys_updated_col_name].dropna().unique())
+    except Exception:
+        unique_list = []
+
+    # Try to call retrieve_claim_numbers (if defined in your env)
+    try:
+        # expects hrp_cursor, hrp_clm_nbr_sql_file_path to exist in your env
+        hrp_clm_nbrs_dict = retrieve_claim_numbers(unique_list, hrp_cursor, hrp_clm_nbr_sql_file_path)
+    except Exception:
+        hrp_clm_nbrs_dict = {}
+
+    try:
+        pst_clm_nbrs_dict = retrieve_claim_numbers(unique_list, pstepp_cursor, pst_clm_nbr_sql_file_path)
+    except Exception:
+        pst_clm_nbrs_dict = {}
+
+    # update_parallel_runbook(df, mapping_dict, key_col, target_col) - if present use it, else do simple update
+    try:
+        df = update_parallel_runbook(df, pst_clm_nbrs_dict, unique_claim_keys_updated_col_name, pst_claim_no_col_name)
+    except Exception:
+        # fallback simple update
+        for k, v in pst_clm_nbrs_dict.items():
+            df.loc[df[unique_claim_keys_updated_col_name] == k, pst_claim_no_col_name] = v
+
+    try:
+        df = update_parallel_runbook(df, hrp_clm_nbrs_dict, unique_claim_keys_updated_col_name, hrp_claim_no_col_name)
+    except Exception:
+        for k, v in hrp_clm_nbrs_dict.items():
+            df.loc[df[unique_claim_keys_updated_col_name] == k, hrp_claim_no_col_name] = v
+
+    # Update 277CA info if function exists
+    try:
+        df = update_parallel_runbook_277CA(df, pst_claim_no_col_name, hrp_claim_no_col_name, pst_277CA_col_name, hrp_277CA_col_name)
+    except Exception:
+        # no-op if function not available
+        pass
+
+    # Formatting: total charge to 2 decimals if present
+    if "Total Charge Amount" in df.columns:
+        df["Total Charge Amount"] = df["Total Charge Amount"].map(format_amount_two_decimals)
+
+    # Replace NaN numeric-like columns to '' for certain fields (your original intent)
+    for col in ["PST OLD Model Region Claim#", "DupeRedrops"]:
+        if col in df.columns:
+            df[col] = df[col].apply(safe_int_str)
+
+    # Revenue Code: NA if nan
+    if "Revenue Code" in df.columns:
+        df["Revenue Code"] = df["Revenue Code"].apply(lambda x: "NA" if pd.isna(x) else str(x))
+
+    # Convert binary columns to TRUE/FALSE strings
+    df = convert_binary_cols_to_true_false(df)
+
+    # Any additional custom transformations you have can be inserted here
+    # e.g. normalization functions normalize_value, normalize_amount etc.
+
+    # ----------------------------
+    # Write DataFrame to final_wb as a new sheet
+    # ----------------------------
+    ws = final_wb.create_sheet(title=sheet_name)
+
+    # Append rows (header included)
+    for r in dataframe_to_rows(df, index=False, header=True):
+        ws.append(r)
+
+    # Copy styles FROM template_ws to this sheet, but DO NOT overwrite values
+    # Copy cell styles and column widths and header row height
+    for row in ws.iter_rows():
+        for cell in row:
+            tpl_cell = template_ws.cell(row=cell.row, column=cell.col_idx)
+            if tpl_cell.has_style:
+                try:
+                    cell.font = copy(tpl_cell.font)
+                    cell.fill = copy(tpl_cell.fill)
+                    cell.border = copy(tpl_cell.border)
+                    cell.alignment = copy(tpl_cell.alignment)
+                    cell.number_format = copy(tpl_cell.number_format)
+                except Exception:
+                    # some style properties can fail to copy for unusual types; ignore
+                    pass
+
+    # Copy column widths from template (only for columns present in template)
+    for col_letter, tpl_dim in template_ws.column_dimensions.items():
+        try:
+            final_dim = ws.column_dimensions[col_letter]
+            final_dim.width = tpl_dim.width
+        except Exception:
+            pass
+
+    # Copy header row height
+    try:
+        header_height = template_ws.row_dimensions[1].height
+        if header_height:
+            ws.row_dimensions[1].height = header_height
+    except Exception:
+        pass
+
+# ----------------------------
+# Save final workbook
+# ----------------------------
+os.makedirs(parallel_runbook_update_folder_loc, exist_ok=True)
+save_path = os.path.join(parallel_runbook_update_folder_loc, output_file_name)
+final_wb.save(save_path)
+print(f"[DONE] Parallel Runbook Updated and saved to: {save_path}")
+
+
+
+
+
+
+
+
 from openpyxl import load_workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 from copy import copy
