@@ -1,3 +1,78 @@
+from openpyxl import load_workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
+from copy import copy
+import pandas as pd
+import os
+
+def update_parallel_runbook_sheets(
+        parallel_runbook_file_path,
+        parallel_runbook_update_folder_loc,
+        output_file_name,
+        parallel_runbook_sheet_names,
+        process_sheet_func  # function that returns updated df for each sheet
+    ):
+
+    # ✅ Load template file (with formatting)
+    template_wb = load_workbook(parallel_runbook_file_path)
+    template_ws = template_wb.active  # Use first sheet as style template
+
+    # ✅ Create final workbook (WITH template sheet removed)
+    final_wb = load_workbook(parallel_runbook_file_path)
+    # Remove template sheet so we recreate clean sheets
+    del final_wb[final_wb.sheetnames[0]]
+
+    # ✅ For each sheet in input list
+    for sheet_name in parallel_runbook_sheet_names:
+
+        print(f"Processing sheet: {sheet_name}")
+
+        # --- Load dataframe for this sheet ---
+        df = pd.read_excel(parallel_runbook_file_path, sheet_name=sheet_name)
+
+        # --- Run your transformation ---
+        updated_df = process_sheet_func(df)
+
+        # --- Create output sheet ---
+        ws = final_wb.create_sheet(title=sheet_name)
+
+        # --- Write DataFrame to sheet ---
+        for row in dataframe_to_rows(updated_df, index=False, header=True):
+            ws.append(row)
+
+        # --- Copy styles ONLY from template sheet ---
+        for r in ws.iter_rows():
+            for cell in r:
+                tpl_cell = template_ws.cell(row=cell.row, column=cell.col_idx)
+
+                if tpl_cell.has_style:
+                    cell.font = copy(tpl_cell.font)
+                    cell.fill = copy(tpl_cell.fill)
+                    cell.border = copy(tpl_cell.border)
+                    cell.alignment = copy(tpl_cell.alignment)
+                    cell.number_format = copy(tpl_cell.number_format)
+
+        # --- Copy column widths ---
+        for col_letter, tpl_dim in template_ws.column_dimensions.items():
+            ws.column_dimensions[col_letter].width = tpl_dim.width
+
+        # --- Copy row height of header row ---
+        if template_ws.row_dimensions[1].height:
+            ws.row_dimensions[1].height = template_ws.row_dimensions[1].height
+
+    # ✅ Save final workbook
+    save_path = os.path.join(parallel_runbook_update_folder_loc, output_file_name)
+    final_wb.save(save_path)
+    print(f"✅ Parallel Runbook Updated Successfully at: {save_path}")
+
+
+
+
+
+
+
+
+
+
 import os
 import re
 import pyodbc
