@@ -1,3 +1,76 @@
+
+from openpyxl import load_workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
+from copy import copy
+import os
+
+# ✅ Sheets to update (leave others unchanged)
+parallel_runbook_sheet_names = ["Run1 Book", "Runbook 908"]
+
+# ✅ Load workbook once
+wb = load_workbook(parallel_runbook_file_path)
+
+# ✅ Use first sheet as template for styles
+template_ws = wb.worksheets[0]
+
+# ✅ Loop through only the sheets you want to update
+for sheet_name in parallel_runbook_sheet_names:
+
+    print(f"Updating sheet: {sheet_name}")
+
+    # ✅ Read/prepare dataframe for this sheet (your logic)
+    df = pd.read_excel(parallel_runbook_file_path, sheet_name=sheet_name, dtype=object)
+
+    # ✅ Get worksheet (it MUST exist)
+    ws = wb[sheet_name]
+
+    # ✅ 1. CLEAR ONLY DATA ROWS (KEEP HEADER ROW & formatting)
+    if ws.max_row > 1:
+        ws.delete_rows(2, ws.max_row - 1)
+
+    # ✅ 2. REWRITE HEADER TEXT ONLY (KEEP EXISTING STYLES)
+    for col_idx, column_name in enumerate(df.columns, start=1):
+        ws.cell(row=1, column=col_idx).value = column_name
+
+    # ✅ 3. WRITE DATAFRAME BELOW HEADER (NO HEADER)
+    for row in dataframe_to_rows(df, index=False, header=False):
+        ws.append(row)
+
+    # ✅ 4. COPY HEADER STYLES FROM TEMPLATE SHEET
+    for col_idx in range(1, ws.max_column + 1):
+        tpl = template_ws.cell(row=1, column=col_idx)
+        dest = ws.cell(row=1, column=col_idx)
+        if tpl.has_style:
+            dest.font = copy(tpl.font)
+            dest.fill = copy(tpl.fill)
+            dest.border = copy(tpl.border)
+            dest.alignment = copy(tpl.alignment)
+            dest.number_format = tpl.number_format
+
+    # ✅ 5. COPY COLUMN WIDTHS FROM TEMPLATE
+    for col_letter, tpl_dim in template_ws.column_dimensions.items():
+        if col_letter in ws.column_dimensions:
+            ws.column_dimensions[col_letter].width = tpl_dim.width
+
+    # ✅ 6. COPY HEADER ROW HEIGHT
+    header_height = template_ws.row_dimensions[1].height
+    if header_height:
+        ws.row_dimensions[1].height = header_height
+
+# ✅ Save to output file
+os.makedirs(parallel_runbook_update_folder_loc, exist_ok=True)
+save_path = os.path.join(parallel_runbook_update_folder_loc, output_file_name)
+wb.save(save_path)
+
+print(f"✅ Updated only {parallel_runbook_sheet_names}.")
+print(f"✅ Saved to {save_path}")
+
+
+
+
+
+
+
 import os
 from copy import copy
 import pandas as pd
