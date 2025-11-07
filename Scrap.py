@@ -1,3 +1,54 @@
+import xml.etree.ElementTree as ET
+import pandas as pd
+
+
+def process_loop(loop, records, prefix=""):
+    loop_id = loop.attrib.get("id", "")
+    loop_prefix = f"{prefix}{loop_id}_" if loop_id else prefix
+
+    # Iterate segments
+    for seg in loop.findall("seg"):
+        seg_id = seg.attrib.get("id", "")
+        row = {"segment_id": seg_id}
+
+        # ----------- Process <ele> elements -----------
+        for ele in seg.findall("ele"):
+            ele_id = ele.attrib.get("id", "")
+            row[f"{loop_prefix}{seg_id}_{ele_id}"] = (ele.text or "").strip()
+
+        # ----------- Process <comp> and its <subele> -----------
+        for comp in seg.findall("comp"):
+            comp_id = comp.attrib.get("id", "")
+
+            for sub in comp.findall("subele"):
+                sub_id = sub.attrib.get("id", "")
+                row[f"{loop_prefix}{seg_id}_{comp_id}_{sub_id}"] = (sub.text or "").strip()
+
+        records.append(row)
+
+    # Process nested loops
+    for child_loop in loop.findall("loop"):
+        process_loop(child_loop, records, prefix=loop_prefix)
+
+
+def xml_to_csv(xml_file, csv_file):
+    tree = ET.parse(xml_file)
+    root = tree.getroot()
+
+    records = []
+
+    for loop in root.findall("loop"):
+        process_loop(loop, records)
+
+    df = pd.DataFrame(records)
+    df.to_csv(csv_file, index=False)
+    print("CSV created:", csv_file)
+
+
+
+
+
+
 
 from openpyxl import load_workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
