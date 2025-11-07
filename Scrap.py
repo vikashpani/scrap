@@ -1,3 +1,21 @@
+# Clean claimLineNo values first (remove .0 etc.)
+df["claimLineNo"] = (
+    df["claimLineNo"]
+        .astype(str)
+        .str.strip()
+        .str.replace(".0", "", regex=False)
+)
+
+# Remove any claim having dotted line numbers like 1.1, 2.1, 3.2
+df = df.groupby("ClaimId").filter(
+        lambda g: ~g["claimLineNo"].str.contains(r"\.").any()
+     )
+
+
+
+
+
+
 def normalize_claim_line_no(df):
     # Clean and convert everything to normalized strings
     def clean(x):
