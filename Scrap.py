@@ -1,4 +1,38 @@
 def normalize_claim_line_no(df):
+    # Clean and convert everything to normalized strings
+    def clean(x):
+        if x is None:
+            return ""
+        return str(x).strip().replace(".0", "")
+
+    df["claimLineNo"] = df["claimLineNo"].apply(clean)
+
+    # Create a clean list for prefix comparison
+    existing = set(df["claimLineNo"].tolist())
+
+    def fix_value(val):
+        if "." not in val:
+            return val
+
+        # prefix before dot → "1.1" → "1"
+        prefix = val.split(".")[0].strip()
+
+        # If prefix exists in dataframe, normalize
+        if prefix in existing:
+            return prefix
+
+        return val
+
+    df["claimLineNo"] = df["claimLineNo"].apply(fix_value)
+
+    return df
+
+
+
+
+
+
+def normalize_claim_line_no(df):
     # Convert to string for safety
     df["claimLineNo"] = df["claimLineNo"].astype(str)
 
