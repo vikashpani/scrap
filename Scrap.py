@@ -1,3 +1,24 @@
+def normalize_claim_line_no(df):
+    # Convert to string for safety
+    df["claimLineNo"] = df["claimLineNo"].astype(str)
+
+    # List of all existing claimLineNo values for prefix check
+    existing_values = df["claimLineNo"].tolist()
+
+    # Replace logic without creating any new columns
+    df["claimLineNo"] = df["claimLineNo"].apply(
+        lambda val: (
+            val.split(".")[0]               # prefix
+            if "." in val and val.split(".")[0] in existing_values
+            else val
+        )
+    )
+
+    return df
+
+
+
+
 import xml.etree.ElementTree as ET
 import pandas as pd
 
