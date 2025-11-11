@@ -1,3 +1,22 @@
+for scenario in runbook_scenarios:
+    df_scenario = runbook_unique[runbook_unique["Data Combinations"] == scenario]
+
+    unmatched = df_scenario[
+        (~df_scenario["Normalized ClaimID"].isin(runbook_keys)) &
+        df_scenario["PatientNum"].notna() &
+        df_scenario["FileInInventory"].notna() &
+        (df_scenario["PatientNum"].astype(str).str.strip() != "") &
+        (df_scenario["FileInInventory"].astype(str).str.strip() != "") &
+        (df_scenario["IS_Number"] == False)
+    ]
+
+    output_name = f"unmatched_{scenario}.xlsx"
+    unmatched.to_excel(output_name, index=False)
+
+
+
+
+
 import pandas as pd
 import glob
 import os
