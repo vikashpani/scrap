@@ -1,3 +1,75 @@
+import pandas as pd
+import glob
+import os
+
+# ----------------------------------------------------------
+# CONFIG
+# ----------------------------------------------------------
+input_folder = r"C:\Users\VIKASPK\Downloads\InputExcels"
+superset_file = r"C:\Users\VIKASPK\Downloads\Superset.xlsx"
+output_folder = r"C:\Users\VIKASPK\Downloads\OutputExcels"
+
+key_column = "ProdClaim"          # column to search on
+superset_key_column = "ProdClaim" # column in Superset to match
+superset_value_column = "Allowed Amount"  # value to bring to concat df
+
+# ----------------------------------------------------------
+# STEP 1 → READ ALL INPUT EXCEL FILES & CONCAT
+# ----------------------------------------------------------
+all_files = glob.glob(os.path.join(input_folder, "*.xlsx"))
+
+df_list = []
+
+for file in all_files:
+    temp_df = pd.read_excel(file)
+    temp_df["SourceFile"] = os.path.basename(file)    # capture filename
+    df_list.append(temp_df)
+
+concat_df = pd.concat(df_list, ignore_index=True)
+
+print("✅ Concatenated rows =", len(concat_df))
+
+# ----------------------------------------------------------
+# STEP 2 → READ SUPERSET FILE
+# ----------------------------------------------------------
+superset_df = pd.read_excel(superset_file)
+
+# Standardize key columns (avoid int/str mismatch)
+concat_df[key_column] = concat_df[key_column].astype(str).str.strip()
+superset_df[superset_key_column] = superset_df[superset_key_column].astype(str).str.strip()
+
+# ----------------------------------------------------------
+# STEP 3 → MERGE (like VLOOKUP)
+# ----------------------------------------------------------
+merged_df = concat_df.merge(
+    superset_df[[superset_key_column, superset_value_column]],
+    how="left",
+    left_on=key_column,
+    right_on=superset_key_column
+)
+
+# Rename for clarity
+merged_df.rename(columns={superset_value_column: "MatchedValue"}, inplace=True)
+
+print("✅ Merge Completed. Matched Value column added.")
+
+# ----------------------------------------------------------
+# STEP 4 → SPLIT BACK INTO INDIVIDUAL EXCEL FILES
+# ----------------------------------------------------------
+os.makedirs(output_folder, exist_ok=True)
+
+for filename, group in merged_df.groupby("SourceFile"):
+    output_path = os.path.join(output_folder, filename)
+    group.to_excel(output_path, index=False)
+    print(f"✅ Saved: {output_path}")
+
+print("\n🎉 **Process Completed Successfully!**")
+
+
+
+
+
+
 
 import streamlit as st
 import pandas as pd
