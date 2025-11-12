@@ -1,3 +1,18 @@
+import math
+
+max_rows = 1_000_000  # Excel limit buffer
+num_parts = math.ceil(len(final_df) / max_rows)
+
+for i in range(num_parts):
+    start = i * max_rows
+    end = (i + 1) * max_rows
+    part_df = final_df.iloc[start:end]
+    filename = f"Matched_Claims_Part_{i+1}.xlsx"
+    part_df.to_excel(filename, index=False)
+    print(f"✅ Saved {filename} ({len(part_df)} rows)")
+
+
+
 import pandas as pd
 
 # Example config
