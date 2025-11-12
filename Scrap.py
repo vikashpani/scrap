@@ -1,3 +1,82 @@
+# app_edi_azure.py
+import streamlit as st
+from io import StringIO
+import os
+from dotenv import load_dotenv
+from langchain_openai import AzureChatOpenAI
+from langchain.schema import HumanMessage, AIMessage, SystemMessage
+
+# --- Load environment variables ---
+load_dotenv()
+
+# --- Azure ChatOpenAI model ---
+llm = AzureChatOpenAI(
+    azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
+    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+    api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+    api_version="2024-06-01",
+    temperature=0.3
+)
+
+# --- Streamlit UI ---
+st.set_page_config(page_title="EDI Chatbot (Azure)", layout="wide")
+st.title("💬 Avality EDI Chatbot (Azure OpenAI + LangChain)")
+
+# --- Sidebar upload ---
+uploaded_file = st.sidebar.file_uploader("📄 Upload EDI/TXT file", type=["txt", "edi"])
+st.sidebar.markdown("Chat with your uploaded EDI. Ask questions like:")
+st.sidebar.markdown("- What payer ID is used?\n- Show me CLM segments.\n- Find CPT 2098 lines.")
+
+# --- Chat history ---
+if "messages" not in st.session_state:
+    st.session_state["messages"] = [SystemMessage(content="""
+        You are an expert EDI (X12 837/835) analysis assistant for Avality Line of Business validation.
+        The user will upload EDI or text files. Identify relevant segments, claim lines, payer info,
+        and summarize or validate when asked. Always include EDI segment tags (ISA, GS, CLM, SVC, etc.)
+        when relevant.
+    """)]
+
+edi_text = None
+if uploaded_file:
+    edi_text = uploaded_file.getvalue().decode("utf-8", errors="ignore")
+    st.success(f"Loaded file: {uploaded_file.name} ({len(edi_text)} chars)")
+else:
+    st.info("⬆️ Upload an EDI/TXT file to start chatting.")
+
+# --- Display previous chat ---
+for msg in st.session_state.messages[1:]:
+    with st.chat_message("user" if isinstance(msg, HumanMessage) else "assistant"):
+        st.markdown(msg.content)
+
+# --- Chat input ---
+if edi_text:
+    user_input = st.chat_input("Ask about this EDI file (e.g., 'show CPT 2098 claims')")
+    if user_input:
+        st.session_state.messages.append(HumanMessage(content=user_input))
+        with st.chat_message("user"):
+            st.markdown(user_input)
+
+        # --- Add EDI context into the system temporarily ---
+        edi_context = f"""
+        The user uploaded an EDI file. Use this text to answer their question accurately.
+        EDI CONTENT (first 5000 chars for context):
+        {edi_text[:5000]}
+        """
+
+        all_messages = [SystemMessage(content=edi_context)] + st.session_state.messages
+
+        with st.chat_message("assistant"):
+            with st.spinner("Analyzing EDI via Azure OpenAI..."):
+                response = llm.invoke(all_messages)
+                st.markdown(response.content)
+                st.session_state.messages.append(AIMessage(content=response.content))
+
+
+
+
+
+
+
 import math
 
 max_rows = 1_000_000  # Excel limit buffer
