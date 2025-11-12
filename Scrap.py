@@ -1,3 +1,79 @@
+
+import pandas as pd
+import numpy as np
+
+# --- your dataframe ---
+# df = pd.read_excel("path_to_file.xlsx")
+
+# Step 1: normalize line number
+df['claimLineNo'] = df['claimLineNo'].astype(str)
+
+# Step 2: extract base line (integer part)
+df['_baseLine'] = df['claimLineNo'].str.extract(r'(\d+)').astype(float)
+
+# Step 3: extract version (numeric for sorting)
+df['_version'] = df['claimLineNo'].apply(lambda x: float(x) if '.' in x else float(x))
+
+# Step 4: detect claims having floating line numbers
+claims_with_float = df[df['claimLineNo'].str.contains(r'\.')]['hccClaimNumber'].unique()
+
+# Step 5: define amount columns
+amount_cols = [
+    'allowedAmount','allowedAmountClaimLevel','billedAmountClaimLevel','billedAmount',
+    'cobBilledAmountClaimLevel','cobPaidAmountClaimLevel','cobBilledAmount','cobPaidAmount',
+    'hccAmountClaimLevel','hccAmount','nonCoveredAmountClaimLevel','nonCoveredAmount',
+    'paidAmountClaimLevel','paidAmount','providerPenaltyClaimLevel','providerPenalty',
+    'submittedChargesClaimLevel','valueCodeAmount'
+]
+
+# Ensure only existing columns are used
+amount_cols = [c for c in amount_cols if c in df.columns]
+
+# Step 6: consolidate function per claim
+def consolidate_claim(group):
+    # If no floating line numbers, return group as-is
+    if not any('.' in str(x) for x in group['claimLineNo']):
+        return group
+    
+    # Sort by version descending (latest first)
+    group = group.sort_values(by='_version', ascending=False)
+    
+    consolidated_rows = []
+    for base_line, subgrp in group.groupby('_baseLine'):
+        # Sum all amount fields
+        amt_sum = subgrp[amount_cols].sum(numeric_only=True)
+        
+        # Take latest version’s row
+        latest = subgrp.iloc[0].copy()
+        
+        # Replace amount fields with summed values
+        for col in amount_cols:
+            latest[col] = amt_sum.get(col, np.nan)
+        
+        # Update claimLineNo to integer (base)
+        latest['claimLineNo'] = str(int(base_line))
+        
+        consolidated_rows.append(latest)
+    
+    return pd.DataFrame(consolidated_rows)
+
+# Step 7: apply per claim
+final_df = (
+    df.groupby('hccClaimNumber', group_keys=False)
+      .apply(consolidate_claim)
+      .reset_index(drop=True)
+)
+
+# Step 8: remove helper columns
+final_df.drop(columns=['_baseLine', '_version'], inplace=True, errors='ignore')
+
+# Now `final_df` has cleaned consolidated claims
+
+
+
+
+
+
 # app_edi_azure.py
 import streamlit as st
 from io import StringIO
