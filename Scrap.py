@@ -1,5 +1,56 @@
 import pandas as pd
 
+# Example config
+key_column = "ProdClaim"           # key column in concat_df
+superset_key_column = "ProdClaim"  # key column in superset_df
+
+# Optional: specific columns you always want to include
+extra_columns = ["ClaimLineStatus", "ClaimNum", "FileInInventory"]
+
+# Step 1: Standardize keys
+concat_df[key_column] = concat_df[key_column].astype(str).str.strip()
+superset_df[superset_key_column] = superset_df[superset_key_column].astype(str).str.strip()
+
+# Step 2: Get only rows from concat_df that match claims in superset_df
+matched_df = concat_df[concat_df[key_column].isin(superset_df[superset_key_column])]
+
+# Step 3: Dynamically pick all columns containing the word "Amount"
+amount_cols = [col for col in matched_df.columns if "amount" in col.lower()]
+
+# Step 4: Combine amount columns + extra fields + key column (avoid duplicates)
+final_cols = list(dict.fromkeys([key_column] + amount_cols + extra_columns))
+
+# Step 5: Filter only those columns (if they exist)
+final_cols = [col for col in final_cols if col in matched_df.columns]
+final_df = matched_df[final_cols]
+
+# Step 6: Optional — bring some columns from superset_df if needed
+# Example: fetch Allowed Amount or Denial Reason
+superset_value_columns = ["AllowedAmount", "DenialReason"]
+available_superset_cols = [c for c in superset_value_columns if c in superset_df.columns]
+
+if available_superset_cols:
+    final_df = final_df.merge(
+        superset_df[[superset_key_column] + available_superset_cols],
+        how="left",
+        left_on=key_column,
+        right_on=superset_key_column
+    )
+
+# Step 7: Save or print result
+print("✅ Matched rows:", len(final_df))
+final_df.to_excel("Matched_Claims_Output.xlsx", index=False)
+print("✅ Saved: Matched_Claims_Output.xlsx")
+
+
+
+
+
+
+
+
+import pandas as pd
+
 def compare_excels(file1, file2, key_col=None, output_file="difference_report.xlsx"):
     xl1 = pd.ExcelFile(file1)
     xl2 = pd.ExcelFile(file2)
