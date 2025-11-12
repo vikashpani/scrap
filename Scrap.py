@@ -1,3 +1,73 @@
+import pandas as pd
+
+def compare_excels(file1, file2, key_col=None, output_file="difference_report.xlsx"):
+    xl1 = pd.ExcelFile(file1)
+    xl2 = pd.ExcelFile(file2)
+    sheets1, sheets2 = set(xl1.sheet_names), set(xl2.sheet_names)
+    common_sheets = sheets1 & sheets2
+
+    writer = pd.ExcelWriter(output_file, engine='openpyxl')
+    summary = []
+
+    # Sheets missing in one file
+    for s in sheets1 - sheets2:
+        summary.append([s, "Sheet missing in File2"])
+    for s in sheets2 - sheets1:
+        summary.append([s, "Sheet missing in File1"])
+
+    # Compare common sheets
+    for sheet in common_sheets:
+        df1 = xl1.parse(sheet)
+        df2 = xl2.parse(sheet)
+
+        df1.fillna("", inplace=True)
+        df2.fillna("", inplace=True)
+
+        added = pd.concat([df2, df1]).drop_duplicates(keep=False)
+        removed = pd.concat([df1, df2]).drop_duplicates(keep=False)
+
+        changes = []
+        common_cols = list(set(df1.columns) & set(df2.columns))
+
+        # Compare cell-level
+        if key_col and key_col in common_cols:
+            merged = df1.merge(df2, on=key_col, how='inner', suffixes=('_old', '_new'))
+            for col in common_cols:
+                if col == key_col: 
+                    continue
+                diff_rows = merged[merged[f"{col}_old"] != merged[f"{col}_new"]]
+                for _, r in diff_rows.iterrows():
+                    changes.append({
+                        'Key': r[key_col],
+                        'Column': col,
+                        'Old Value': r[f"{col}_old"],
+                        'New Value': r[f"{col}_new"]
+                    })
+
+        # Write results
+        if not added.empty:
+            added.to_excel(writer, sheet_name=f"{sheet}_Added", index=False)
+            summary.append([sheet, f"{len(added)} rows added"])
+        if not removed.empty:
+            removed.to_excel(writer, sheet_name=f"{sheet}_Removed", index=False)
+            summary.append([sheet, f"{len(removed)} rows removed"])
+        if changes:
+            pd.DataFrame(changes).to_excel(writer, sheet_name=f"{sheet}_Changed", index=False)
+            summary.append([sheet, f"{len(changes)} cell changes"])
+
+    # Write summary
+    summary_df = pd.DataFrame(summary, columns=["Sheet Name", "Summary"])
+    summary_df.to_excel(writer, sheet_name="Summary", index=False)
+
+    writer.close()
+    print(f"✅ Difference report saved as: {output_file}")
+
+
+
+
+
+
+
 for scenario in runbook_scenarios:
     df_scenario = runbook_unique[runbook_unique["Data Combinations"] == scenario]
 
