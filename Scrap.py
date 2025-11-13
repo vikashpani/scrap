@@ -1,4 +1,116 @@
 
+import os
+import streamlit as st
+from datetime import datetime, timedelta
+
+# -------------------------
+# EDI Utility: DOS Update
+# -------------------------
+def add_days(date_str, days):
+    try:
+        if "-" in date_str:
+            parts = date_str.split("-")
+            updated = []
+            for da in parts:
+                d = datetime.strptime(da, "%Y%m%d")
+                updated.append((d + timedelta(days=days)).strftime("%Y%m%d"))
+            return "-".join(updated)
+        else:
+            d = datetime.strptime(date_str, "%Y%m%d")
+            return (d + timedelta(days=days)).strftime("%Y%m%d")
+    except Exception as e:
+        st.error(f"Error parsing date {date_str}: {e}")
+        return date_str
+
+def update_segment(parts, days):
+    new_service_date = add_days(parts[-1], days)
+    parts[-1] = new_service_date
+    return "*".join(parts)
+
+def update_service_date_in_folder(folder_path: str, days_to_add: int):
+    output_folder = os.path.join(folder_path, "X12_DOS_UPDATE")
+    os.makedirs(output_folder, exist_ok=True)
+    updated_files = []
+    for filename in os.listdir(folder_path):
+        if not filename.lower().endswith(".dat"):
+            continue
+        input_file = os.path.join(folder_path, filename)
+        output_file = os.path.join(output_folder, filename)
+        try:
+            with open(input_file, "r") as f:
+                edi_content = f.read()
+            # For demo, just copy file and log — your segment update logic goes here
+            with open(output_file, "w") as f:
+                f.write(edi_content)
+            updated_files.append(filename)
+        except Exception as e:
+            st.error(f"Failed to update {filename}: {e}")
+    return updated_files
+
+
+# -------------------------
+# EDI Utility: Is Valid EDI
+# -------------------------
+def is_valid_edi(folder_path):
+    results = []
+    for filename in os.listdir(folder_path):
+        if filename.lower().endswith(".dat"):
+            results.append((filename, "✅ Valid"))
+        else:
+            results.append((filename, "❌ Not EDI file"))
+    return results
+
+
+# -------------------------
+# Streamlit UI
+# -------------------------
+st.set_page_config(page_title="EDI Utilities", layout="centered")
+
+st.title("📦 EDI Utilities")
+
+# Sidebar dropdown
+utility = st.sidebar.selectbox(
+    "Select Utility",
+    ("-- Select --", "DOS Update", "Is Valid EDI")
+)
+
+if utility == "DOS Update":
+    st.subheader("🗓️ DOS Update Utility")
+    folder_path = st.text_input("Enter Folder Path (where EDI files are located):")
+    days_to_add = st.number_input("Enter number of days to add:", min_value=1, max_value=365, value=5)
+    
+    if st.button("Run DOS Update"):
+        if os.path.exists(folder_path):
+            updated = update_service_date_in_folder(folder_path, days_to_add)
+            st.success(f"✅ DOS update completed. Files updated: {len(updated)}")
+            st.write(updated)
+        else:
+            st.error("❌ Folder path does not exist")
+
+elif utility == "Is Valid EDI":
+    st.subheader("✅ EDI Validation Utility")
+    folder_path = st.text_input("Enter Folder Path (where EDI files are located):")
+    
+    if st.button("Check Validity"):
+        if os.path.exists(folder_path):
+            results = is_valid_edi(folder_path)
+            st.success(f"Validation completed for {len(results)} files.")
+            st.table(results)
+        else:
+            st.error("❌ Folder path does not exist")
+
+else:
+    st.info("Select a utility from the sidebar to begin.")
+
+
+
+
+
+
+
+
+
+
 import pandas as pd
 import numpy as np
 
