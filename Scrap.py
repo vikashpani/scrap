@@ -1,3 +1,56 @@
+
+import streamlit as st
+from langchain.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+
+# Initialize LLM with tracking enabled
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+
+# Build chain
+prompt = ChatPromptTemplate.from_template("""
+You are an EDI expert.
+
+Current EDI:
+{edi}
+
+User request: {query}
+
+Identify correct segment(s).
+Modify only what is necessary.
+Return the updated EDI.
+Also summarize what was changed.
+""")
+
+chain = prompt | llm
+
+# Streamlit UI
+query = st.text_input("Enter your edit request (e.g. 'Change service line date')")
+
+if query:
+    # Run chain with usage reporting
+    response = llm.invoke(
+        prompt.format_messages(edi=st.session_state.edi_data, query=query)
+    )
+    
+    # Show output
+    st.subheader("Updated EDI")
+    st.text(response.content)
+
+    # Extract token usage (if model provides it)
+    if hasattr(response, "response_metadata") and "token_usage" in response.response_metadata:
+        usage = response.response_metadata["token_usage"]
+        st.subheader("Token Usage Report")
+        st.json({
+            "Prompt Tokens": usage.get("prompt_tokens", 0),
+            "Completion Tokens": usage.get("completion_tokens", 0),
+            "Total Tokens": usage.get("total_tokens", 0)
+        })
+    else:
+        st.warning("Token usage details not available for this model.")
+
+
+
+
 import os
 import pandas as pd
 from pyx12.x12context import X12ContextReader
