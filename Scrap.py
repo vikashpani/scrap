@@ -1,4 +1,101 @@
 
+import tempfile
+import pandas as pd
+import xml.etree.ElementTree as ET
+from pyx12.params import ParamsBase
+from pyx12.x12n_document import x12n_document
+
+
+def convert_edi_to_excel(edi_input, output_excel="edi_output.xlsx"):
+    """
+    Convert an EDI X12 file/string to Excel using pyx12.
+    Supports EDI provided as:
+        - raw text (string)
+        - file path (string ending with .edi)
+    """
+
+    # --------------------------
+    # 1. PREPARE INPUT EDI FILE
+    # --------------------------
+    if isinstance(edi_input, str) and edi_input.strip().endswith(".edi"):
+        # User passed a file path
+        edi_path = edi_input
+    else:
+        # User passed raw EDI text → write to temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".edi", mode="w") as tmp:
+            tmp.write(edi_input)
+            edi_path = tmp.name
+
+    # --------------------------
+    # 2. PREPARE REQUIRED OUTPUT FILES FOR PYX12
+    # --------------------------
+    ack_path = tempfile.NamedTemporaryFile(delete=False, suffix=".997").name
+    html_path = tempfile.NamedTemporaryFile(delete=False, suffix=".html").name
+
+    # --------------------------
+    # 3. PARSE USING PYX12
+    # --------------------------
+    params = ParamsBase()
+    params.set("xml.empty", True)
+
+    # pyx12 requires: params, input.edi, output.997, output.html
+    doc = x12n_document(params, edi_path, ack_path, html_path)
+
+    # --------------------------
+    # 4. GET XML DATA
+    # --------------------------
+    xml_tree = doc.getTree()
+    root = xml_tree.getroot()
+
+    # --------------------------
+    # 5. CONVERT XML → TABLE FORMAT
+    # --------------------------
+    rows = []
+
+    for seg in root.iter():
+        if seg.tag == "seg":
+            seg_id = seg.get("id")
+            row = {"Segment": seg_id}
+
+            for ele in seg:
+                row[ele.get("id")] = ele.text
+
+            rows.append(row)
+
+    # Convert to DataFrame
+    df = pd.DataFrame(rows)
+
+    # --------------------------
+    # 6. SAVE EXCEL
+    # --------------------------
+    df.to_excel(output_excel, index=False)
+    print(f"Excel generated: {output_excel}")
+
+    return df
+
+
+# --------------------------
+# 🟢 EXAMPLE USAGE
+# --------------------------
+if __name__ == "__main__":
+    sample_edi = """ISA*00* *00* *ZZ*SENDER*ZZ*RECEIVER*240610*1200*^*00501*000000001*0*T*:~
+GS*HC*SENDER*RECEIVER*20240610*1200*1*X*005010X222A1~
+ST*837*0001*005010X222A1~
+BHT*0019*00*1234*20240610*1200*CH~
+NM1*41*2*ABC HOSPITAL*****46*123456789~
+SE*20*0001~
+GE*1*1~
+IEA*1*000000001~"""
+
+    convert_edi_to_excel(sample_edi, "edi_output.xlsx")
+
+
+
+
+
+
+
+
 import pandas as pd
 from pyx12.params import ParamsBase
 from pyx12.x12n_document import x12n_document
