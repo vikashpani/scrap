@@ -1,3 +1,105 @@
+import os
+import pandas as pd
+from pyx12.x12context import X12ContextReader
+from pyx12.x12file import X12File
+from pyx12.errors import EngineError
+
+
+def flatten_edi(parsed_data):
+    """
+    Flatten hierarchical EDI structure (Loops → Segments → Elements)
+    into a row-based structure for Excel.
+    """
+    rows = []
+
+    for loop in parsed_data:
+        loop_id = loop.get("loop_id")
+
+        for seg in loop.get("segments", []):
+            seg_id = seg.get("seg_id")
+            seg_values = seg.get("elements", {})
+
+            row = {"loop_id": loop_id, "segment_id": seg_id}
+
+            # Add all elements E1, E2, E3 etc.
+            for k, v in seg_values.items():
+                row[k] = v
+
+            rows.append(row)
+
+    return rows
+
+
+def parse_edi_to_dict(edi_path):
+    """
+    Parse an EDI file using pyx12 into structured Python dictionaries.
+    """
+    try:
+        x12file = X12File(edi_path)
+        ctx = X12ContextReader()
+
+        parsed_output = []
+
+        for seg in x12file.iter_segments():
+            ctx.push(seg)
+
+            loop_id = ctx.get_loop_id()
+            seg_id = seg.seg_id
+            elements = {}
+
+            for idx, ele in enumerate(seg.elements, start=1):
+                elements[f"E{idx}"] = ele.value
+
+            parsed_output.append({
+                "loop_id": loop_id,
+                "seg_id": seg_id,
+                "elements": elements
+            })
+
+        return parsed_output
+
+    except EngineError as e:
+        print("EDI Parse Error:", e)
+        return []
+
+
+def edi_to_excel(edi_path, excel_path):
+    print("Parsing EDI file...")
+
+    parsed_data = parse_edi_to_dict(edi_path)
+    if not parsed_data:
+        print("No data parsed!")
+        return
+
+    print("Flattening EDI structure...")
+    flat_rows = flatten_edi(parsed_data)
+
+    print("Writing to Excel...")
+    df = pd.DataFrame(flat_rows)
+    df.to_excel(excel_path, index=False)
+
+    print(f"✔ Conversion complete: {excel_path}")
+
+
+# -------------------------
+# RUN THE CONVERTER
+# -------------------------
+
+input_edi = r"input.edi"              # your EDI file path
+output_excel = r"edi_output.xlsx"     # output path
+
+edi_to_excel(input_edi, output_excel)
+
+
+
+
+
+
+
+
+
+
+
 def consolidate_claim(group):
     # Only keep fractional rows (e.g., 6.1, 6.2, etc.)
     fractional = group[group['_is_fractional']].copy()
