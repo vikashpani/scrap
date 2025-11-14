@@ -5,6 +5,167 @@ from pyx12.params import ParamsBase
 from pyx12.x12n_document import x12n_document
 
 
+# -------------------------------------------------------------------
+# 1) READ EDI FILE → SEGMENT LIST
+# -------------------------------------------------------------------
+def change_file_into_segment_list(edi_file_path):
+    with open(edi_file_path, "r", encoding="utf-8") as file:
+        segment_list = [line.strip() for line in file.readlines()]
+    return segment_list
+
+
+# -------------------------------------------------------------------
+# 2) CONVERT SEGMENTS → XML OBJECT
+# -------------------------------------------------------------------
+def load_edi_segments_as_xml_obj(edi_segments_list):
+    edibuffer = StringIO("\n".join(edi_segments_list))
+
+    params = ParamsBase()
+    params.set("xml.empty", True)
+
+    xmlbuffer = StringIO()
+
+    # pyx12 conversion to XML
+    x12n_document(
+        params,
+        edibuffer,
+        fd_997=None,
+        fd_html=None,
+        fd_xmldoc=xmlbuffer,
+        map_path=None
+    )
+
+    xmlbuffer.seek(0)
+    rootnode = ET.fromstring(xmlbuffer.getvalue())
+    return rootnode
+
+
+# -------------------------------------------------------------------
+# 3) Helper functions for XML extraction
+# -------------------------------------------------------------------
+def get_seg_ele(scope: ET.Element, seg_id: str, ele_id: str) -> str:
+    """
+    Extract <seg id='seg_id'> <ele id='ele_id'>
+    Example: get_seg_ele(loop, "CLM", "CLM01")
+    """
+    node = scope.find(f".//seg[@id='{seg_id}']/ele[@id='{ele_id}']")
+    return (node.text or "").strip() if node is not None and node.text else ""
+
+
+def find_all_isa_loops(root: ET.Element):
+    loops = root.findall(".//loop[@id='ISA_LOOP']")
+    if loops:
+        return loops
+
+    # fallback if ISA_LOOP is not explicitly present
+    return root.findall(".//seg[@id='ISA']/..")
+
+
+def find_gs_loops(isa_loop: ET.Element):
+    return isa_loop.findall(".//loop[@id='GS_LOOP']")
+
+
+def find_st_loops(gs_loop: ET.Element):
+    return gs_loop.findall(".//loop[@id='ST_LOOP']")
+
+
+def find_2000_loops(st_loop: ET.Element):
+    # pyx12 often stores 2000 loops without A/B/C in id
+    return st_loop.findall(".//loop[@id='2000']")
+
+
+def find_2300_loops(loop2000: ET.Element):
+    return loop2000.findall(".//loop[@id='2300']")
+
+
+def find_2400_loops(loop2000: ET.Element):
+    return loop2000.findall(".//loop[@id='2400']")
+
+
+# -------------------------------------------------------------------
+# 4) Extract → Flatten → Build DataFrame
+# -------------------------------------------------------------------
+def extract_edi_structured(root):
+    all_records = []
+
+    for isa in find_all_isa_loops(root):
+        isa_control = get_seg_ele(isa, "ISA", "ISA13")
+
+        for gs in find_gs_loops(isa):
+            gs_control = get_seg_ele(gs, "GS", "GS06")
+
+            for st in find_st_loops(gs):
+                st_control = get_seg_ele(st, "ST", "ST02")
+
+                for loop2000 in find_2000_loops(st):
+
+                    subscriber_id = get_seg_ele(loop2000, "NM1", "NM109")
+
+                    for loop2300 in find_2300_loops(loop2000):
+
+                        claim_id = get_seg_ele(loop2300, "CLM", "CLM01")
+                        claim_amt = get_seg_ele(loop2300, "CLM", "CLM02")
+
+                        # Base record (header + claim)
+                        base = {
+                            "ISA_Control": isa_control,
+                            "GS_Control": gs_control,
+                            "ST_Control": st_control,
+                            "SubscriberID": subscriber_id,
+                            "ClaimID": claim_id,
+                            "ClaimAmount": claim_amt,
+                        }
+
+                        # Now drill into service line items 2400
+                        svc_loops = find_2400_loops(loop2000)
+
+                        if not svc_loops:
+                            all_records.append(base)
+                        else:
+                            for loop2400 in svc_loops:
+                                rec = base.copy()
+                                rec["LineNumber"] = get_seg_ele(loop2400, "LX", "LX01")
+                                rec["ProcedureCode"] = get_seg_ele(loop2400, "SV1", "SV101-02")
+                                rec["LineAmount"] = get_seg_ele(loop2400, "SV1", "SV102")
+
+                                all_records.append(rec)
+
+    return pd.DataFrame(all_records)
+
+
+# -------------------------------------------------------------------
+# 5) MAIN FUNCTION TO EXPORT EXCEL
+# -------------------------------------------------------------------
+def edi_to_excel(edi_path, output_xlsx):
+    segments = change_file_into_segment_list(edi_path)
+    root = load_edi_segments_as_xml_obj(segments)
+    df = extract_edi_structured(root)
+    df.to_excel(output_xlsx, index=False)
+    print(f"Successfully created Excel: {output_xlsx}")
+
+
+# -------------------------------------------------------------------
+# Run directly
+# -------------------------------------------------------------------
+if __name__ == "__main__":
+    edi_path = "sample.edi"        # <-- PUT YOUR EDI FILE HERE
+    output_xlsx = "EDI_Output.xlsx"
+    edi_to_excel(edi_path, output_xlsx)
+
+
+
+
+
+
+
+
+import pandas as pd
+import xml.etree.ElementTree as ET
+from io import StringIO
+from pyx12.params import ParamsBase
+from pyx12.x12n_document import x12n_document
+
+
 # -------------------------------------------------------
 # Convert EDI → Segment List
 # -------------------------------------------------------
