@@ -1,3 +1,99 @@
+import pandas as pd
+import xml.etree.ElementTree as ET
+from io import StringIO
+from pyx12.params import ParamsBase
+from pyx12.x12n_document import x12n_document
+
+
+# ----------------------------------------------------------
+# 1. Convert EDI file → list of segments
+# ----------------------------------------------------------
+def change_file_into_segment_list(edi_file_path):
+    with open(edi_file_path, "r", encoding="utf-8", errors="ignore") as file:
+        segment_list = [line.strip() for line in file.readlines()]
+    return segment_list
+
+
+# ----------------------------------------------------------
+# 2. Load segments into XML object using pyx12
+# ----------------------------------------------------------
+def load_edi_segments_as_xml_obj(edi_segments_list):
+    edibuffer = StringIO("\n".join(edi_segments_list))
+
+    param = ParamsBase()
+    param.set("xml.empty", True)
+
+    xmlbuffer = StringIO()
+
+    # Parse EDI → XML into xmlbuffer
+    x12n_document(
+        param,
+        edibuffer,
+        fd_997=None,
+        fd_html=None,
+        fd_xmldoc=xmlbuffer,
+        map_path=None
+    )
+
+    xmlbuffer.seek(0)
+    rootnode = ET.fromstring(xmlbuffer.getvalue())
+
+    return rootnode
+
+
+# ----------------------------------------------------------
+# 3. Convert XML → Flatten rows into Excel table
+# ----------------------------------------------------------
+def xml_to_dataframe(root):
+    rows = []
+
+    for loop in root.iter("loop"):
+        loop_id = loop.get("id", "")
+
+        for seg in loop.iter("seg"):
+            seg_id = seg.get("id")
+
+            row = {
+                "loop_id": loop_id,
+                "segment": seg_id,
+            }
+
+            # Elements and sub-elements
+            for ele in seg:
+                ele_id = ele.get("id")
+                if "-" not in ele_id:
+                    # Normal element
+                    row[ele_id] = ele.text
+                else:
+                    # Composite sub-element, keep as is
+                    row[ele_id] = ele.text
+
+            rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+# ----------------------------------------------------------
+# 4. Wrapper to convert EDI → Excel
+# ----------------------------------------------------------
+def edi_to_excel(edi_file_path, output_excel="edi_output.xlsx"):
+    seg_list = change_file_into_segment_list(edi_file_path)
+    xml_root = load_edi_segments_as_xml_obj(seg_list)
+    df = xml_to_dataframe(xml_root)
+    df.to_excel(output_excel, index=False)
+    print(f"✔ Excel created: {output_excel}")
+    return df
+
+
+# Example usage
+if __name__ == "__main__":
+    edi_to_excel("input.edi", "edi_output.xlsx")
+
+
+
+
+
+
 
 import tempfile
 import pandas as pd
