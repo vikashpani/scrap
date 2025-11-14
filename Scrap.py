@@ -1,4 +1,50 @@
 def consolidate_claim(group):
+    # Only keep fractional rows (e.g., 6.1, 6.2, etc.)
+    fractional = group[group['_is_fractional']].copy()
+
+    # No fractional → return original rows
+    if fractional.empty:
+        return group
+
+    consolidated = []
+
+    # Process fractional groups based on baseline
+    for base, subgrp in fractional.groupby('_baseLine'):
+
+        # Sort: latest version first (largest tuple wins)
+        subgrp = subgrp.sort_values('_version', ascending=False)
+
+        latest = subgrp.iloc[0].copy()   # this will be 6.2
+
+        # Deduplicate fractional lines for amount summing
+        dedup = subgrp.drop_duplicates(
+            subset=['claimLineNo'] + amount_cols,
+            keep='first'
+        )
+
+        # Sum amounts ONLY from fractional lines (exclude base line "6")
+        amt_sum = dedup[amount_cols].apply(pd.to_numeric, errors='coerce').sum()
+
+        # Overwrite amount columns with sum
+        for col in amount_cols:
+            latest[col] = amt_sum.get(col, np.nan)
+
+        # Merge non-amount columns (keep only from latest)
+        # No merging needed — latest already holds desired values
+        
+        consolidated.append(latest)
+
+    return pd.DataFrame(consolidated)
+
+
+
+
+
+
+
+
+
+def consolidate_claim(group):
     # Only keep fractional rows inside each claim
     frac = group[group['_is_fractional']].copy()
     
