@@ -1,3 +1,63 @@
+def consolidate_claim(group):
+    # Only keep fractional rows inside each claim
+    frac = group[group['_is_fractional']].copy()
+    
+    if frac.empty:
+        return group  # No fractional → return original rows
+    
+    consolidated = []
+
+    # Process each base group (1,2,3)
+    for base, subgrp in frac.groupby('_baseLine'):
+
+        # Sort latest version first
+        subgrp = subgrp.sort_values('_version', ascending=False)
+
+        # Deduplicate for amount summing
+        dedup = subgrp.drop_duplicates(
+            subset=['claimLineNo'] + amount_cols,
+            keep='first'
+        )
+
+        # Sum amount columns
+        amt_sum = dedup[amount_cols].apply(
+            pd.to_numeric, errors='coerce'
+        ).sum()
+
+        # Latest highest version row
+        latest = subgrp.iloc[0].copy()
+
+        # Overwrite amount columns
+        for col in amount_cols:
+            latest[col] = amt_sum.get(col, np.nan)
+
+        # Merge text fields excluding amount + helper cols
+        for col in subgrp.columns:
+            if col not in amount_cols + [
+                '_baseLine', '_version', '_is_fractional', 'claimLineNo'
+            ]:
+                vals = subgrp[col].dropna().astype(str).unique()
+                if len(vals) > 1:
+                    latest[col] = ','.join(sorted(vals))
+                elif len(vals) == 1:
+                    latest[col] = vals[0]
+                else:
+                    latest[col] = np.nan
+
+        # Keep latest version number as final line number (e.g., 1.1.2)
+        consolidated.append(latest)
+
+    return pd.DataFrame(consolidated)
+
+
+
+
+
+
+
+
+
+
 
 import os
 import streamlit as st
