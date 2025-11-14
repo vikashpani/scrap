@@ -8,6 +8,95 @@ from pyx12.x12n_document import x12n_document
 
 def convert_edi_to_excel(edi_input, output_excel="edi_output.xlsx"):
     """
+    Convert EDI X12 file/string to Excel using pyx12
+    Fixes: ValueError: invalid mode 'U'
+    """
+
+    # -------------------------
+    # 1. CREATE INPUT FILE
+    # -------------------------
+    if isinstance(edi_input, str) and edi_input.strip().endswith(".edi"):
+        # Path provided → read file manually (avoid 'U' mode)
+        with open(edi_input, "r", encoding="utf-8", errors="ignore") as f:
+            edi_text = f.read()
+    else:
+        # Raw EDI string
+        edi_text = edi_input
+
+    # Write text into a temp file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".edi", mode="w") as tmp:
+        tmp.write(edi_text)
+        edi_path = tmp.name
+
+    # -------------------------
+    # 2. TEMP OUTPUT FILES FOR PYX12
+    # -------------------------
+    ack_path = tempfile.NamedTemporaryFile(delete=False, suffix=".997").name
+    html_path = tempfile.NamedTemporaryFile(delete=False, suffix=".html").name
+
+    # -------------------------
+    # 3. PARSE USING PYX12 (NO 'U' MODE)
+    # -------------------------
+    params = ParamsBase()
+    params.set("xml.empty", True)
+
+    # FIX: OPEN FILE YOURSELF IN NORMAL 'r' MODE
+    with open(edi_path, "r", encoding="utf-8", errors="ignore") as fp:
+        doc = x12n_document(params, fp, ack_path, html_path)
+
+    # -------------------------
+    # 4. CONVERT XML TO TABLE
+    # -------------------------
+    xml_tree = doc.getTree()
+    root = xml_tree.getroot()
+
+    rows = []
+    for seg in root.iter():
+        if seg.tag == "seg":
+            row = {"Segment": seg.get("id")}
+            for ele in seg:
+                row[ele.get("id")] = ele.text
+            rows.append(row)
+
+    df = pd.DataFrame(rows)
+
+    # -------------------------
+    # 5. SAVE EXCEL
+    # -------------------------
+    df.to_excel(output_excel, index=False)
+    print(f"Excel created: {output_excel}")
+
+    return df
+
+
+# SAMPLE USAGE
+if __name__ == "__main__":
+    edi_sample = """ISA*00* *00* *ZZ*SENDER*ZZ*RECEIVER*240610*1200*^*00501*000000001*0*T*:~
+GS*HC*SENDER*RECEIVER*20240610*1200*1*X*005010X222A1~
+ST*837*0001*005010X222A1~
+BHT*0019*00*1234*20240610*1200*CH~
+NM1*41*2*ABC HOSPITAL*****46*123456789~
+SE*20*0001~
+GE*1*1~
+IEA*1*000000001~"""
+
+    convert_edi_to_excel(edi_sample, "edi_output.xlsx")
+
+
+
+
+
+
+
+import tempfile
+import pandas as pd
+import xml.etree.ElementTree as ET
+from pyx12.params import ParamsBase
+from pyx12.x12n_document import x12n_document
+
+
+def convert_edi_to_excel(edi_input, output_excel="edi_output.xlsx"):
+    """
     Convert an EDI X12 file/string to Excel using pyx12.
     Supports EDI provided as:
         - raw text (string)
