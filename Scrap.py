@@ -5,6 +5,154 @@ from pyx12.params import ParamsBase
 from pyx12.x12n_document import x12n_document
 
 
+# -------------------------------------------------------
+# Convert EDI → Segment List
+# -------------------------------------------------------
+def edi_to_segment_list(file_path):
+    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+        return [line.strip() for line in f.readlines()]
+
+
+# -------------------------------------------------------
+# Load into XML using pyx12
+# -------------------------------------------------------
+def edi_segments_to_xml(segments):
+    buffer_in = StringIO("\n".join(segments))
+
+    params = ParamsBase()
+    params.set("xml.empty", True)
+
+    xmlbuffer = StringIO()
+
+    x12n_document(
+        params,
+        buffer_in,
+        fd_997=None,
+        fd_html=None,
+        fd_xmldoc=xmlbuffer,
+        map_path=None
+    )
+
+    xmlbuffer.seek(0)
+    root = ET.fromstring(xmlbuffer.getvalue())
+    return root
+
+
+# -------------------------------------------------------
+# Extract full mapping (Loop / Segment / Element)
+# -------------------------------------------------------
+def extract_mapping(root):
+    rows = []
+    for loop in root.iter("loop"):
+        loop_id = loop.get("id", "")
+        for seg in loop.iter("seg"):
+            seg_id = seg.get("id")
+            for ele in seg:
+                ele_id = ele.get("id")
+                rows.append({
+                    "loop": loop_id,
+                    "segment": seg_id,
+                    "element": ele_id
+                })
+    return pd.DataFrame(rows)
+
+
+# -------------------------------------------------------
+# Proper 837 Flattening Logic
+# -------------------------------------------------------
+def flatten_837(root):
+    final_rows = []
+
+    current_2000A = {}
+    current_2000B = {}
+    current_2000C = {}
+    current_2000D = {}
+    current_2300 = {}
+
+    for loop in root.iter("loop"):
+        loop_id = loop.get("id", "")
+
+        # ---------------------------
+        # Loop detection
+        # ---------------------------
+        if loop_id == "2000A":
+            current_2000A = {}
+        elif loop_id == "2000B":
+            current_2000B = {}
+        elif loop_id == "2000C":
+            current_2000C = {}
+        elif loop_id == "2000D":
+            current_2000D = {}
+        elif loop_id == "2300":
+            current_2300 = {}
+
+        # ---------------------------
+        # Extract segment values
+        # ---------------------------
+        for seg in loop.iter("seg"):
+            seg_id = seg.get("id")
+
+            if seg_id == "NM1":
+                if loop_id == "2000A":
+                    current_2000A["SubmitterName"] = seg.findtext("NM103")
+                elif loop_id == "2000B":
+                    current_2000B["ReceiverName"] = seg.findtext("NM103")
+                elif loop_id == "2010AA":
+                    current_2000C["BillingProviderNPI"] = seg.findtext("NM109")
+                elif loop_id == "2010BA":
+                    current_2000D["SubscriberLastName"] = seg.findtext("NM103")
+
+            if seg_id == "CLM":
+                current_2300["ClaimID"] = seg.findtext("CLM01")
+                current_2300["ClaimCharge"] = seg.findtext("CLM02")
+
+            # 2400 line-level segment
+            if seg_id == "SV1":
+                line = {
+                    **current_2000A,
+                    **current_2000B,
+                    **current_2000C,
+                    **current_2000D,
+                    **current_2300,
+                    "ProcedureCode": seg.findtext("SV101-02"),
+                    "LineAmount": seg.findtext("SV102"),
+                }
+                final_rows.append(line)
+
+    return pd.DataFrame(final_rows)
+
+
+# -------------------------------------------------------
+# Wrapper: Create BOTH mapping + flattened Excel
+# -------------------------------------------------------
+def edi_to_full_excel(edi_file, output_prefix="edi_output"):
+    segments = edi_to_segment_list(edi_file)
+    xmlroot = edi_segments_to_xml(segments)
+
+    # Mapping sheet
+    mapping_df = extract_mapping(xmlroot)
+    mapping_df.to_excel(f"{output_prefix}_mapping.xlsx", index=False)
+
+    # Flattened 837 claim lines
+    flat_df = flatten_837(xmlroot)
+    flat_df.to_excel(f"{output_prefix}_flattened.xlsx", index=False)
+
+    print("✔ Mapping and Flattened Excel created")
+
+    return mapping_df, flat_df
+
+
+
+
+
+
+import pandas as pd
+import xml.etree.ElementTree as ET
+from io import StringIO
+from pyx12.params import ParamsBase
+from pyx12.x12n_document import x12n_document
+
+
 # ----------------------------------------------------------
 # 1. Convert EDI file → list of segments
 # ----------------------------------------------------------
