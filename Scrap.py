@@ -1,4 +1,72 @@
 
+import pandas as pd
+from pyx12.params import ParamsBase
+from pyx12.x12n_document import x12n_document
+
+def parse_edi_new(edi_path):
+    """
+    Parse EDI using the NEW pyx12 API.
+    Returns list of dictionaries: loop, segment, element values.
+    """
+    params = ParamsBase()
+    doc = x12n_document(params)
+
+    with open(edi_path, "r") as f:
+        edi_text = f.read()
+
+    # Parse EDI
+    doc.parse_string(edi_text)
+
+    rows = []
+
+    # Walk entire structure
+    for node in doc.walk_tree():
+        if node.is_seg():        # SEGMENT
+            seg = node
+
+            row = {
+                "loop_id": seg.loop,
+                "segment_id": seg.id
+            }
+
+            # Extract all elements E1, E2, E3...
+            for idx, ele in enumerate(seg.elements, start=1):
+                row[f"E{idx}"] = ele.get_value()
+
+            rows.append(row)
+
+    return rows
+
+
+def edi_to_excel_new(edi_path, excel_path):
+    print("Parsing EDI using pyx12 new API...")
+
+    rows = parse_edi_new(edi_path)
+    if not rows:
+        print("No data parsed.")
+        return
+
+    df = pd.DataFrame(rows)
+    df.to_excel(excel_path, index=False)
+
+    print(f"✔ SUCCESS — Excel generated: {excel_path}")
+
+
+# ------------------------
+# RUN
+# ------------------------
+edi_file = r"input.edi"
+output_file = r"edi_output.xlsx"
+
+edi_to_excel_new(edi_file, output_file)
+
+
+
+
+
+
+
+
 import streamlit as st
 from langchain.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
