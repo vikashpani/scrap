@@ -1,3 +1,32 @@
+I need build a streamlit application for one of my idea.
+
+User input like this:
+Give me following Institutional claim data to submit children home and community Based Services for Palliative Care where value code amount = 8017 and value code "24" and service "90832" and modifier "TJ" date-of-service, Place-of-service, Type-of-service, ICD-10 diagnosis code, CPT/HCPCS code, Service modifier, diagnosis modifier, revenue code, value code amount, value code provider NPI from New York state.
+How many edi files for this query-3
+
+I will create a mapping sheet which is in excel file this will contain 
+XML loop segment element id subelement id name
+Eg:
+2300 CLM CLM01 subelement is null  claimid
+
+Like this we need to build the basic mapping we can add in future if any new things added.
+
+Reading the query and check which segment data needs to check against edi file and pull the edi file checking those segments in my file inventory where we have 1000 of edis we need to pick the relevant edis based on this match query. And we need to pull how many user want if he did not specify only one needs to pull.
+
+Input scenario files needed
+Scenario1 5
+Scenario2 3
+
+Now read the scenario and collect the loop and segment id if subelement id present that take  LLM help to pick the right rows from the mapping sheet. Using that mapping data checks in the source inventory for the edi file. In each edi file might contain multiple 2000a loops and 2000b loops if it match then only that block needs to pull by that file. This process as to run for for each scenario. Final all collected edis in one folder scenario based .dat
+
+I will give some code what we developed you just use that as reference. Then you can write code.
+
+
+
+
+
+
+
 import pandas as pd
 import xml.etree.ElementTree as ET
 from io import StringIO
