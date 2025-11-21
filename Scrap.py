@@ -1,3 +1,272 @@
+Ingest / ETL
+
+Parse 837-derived Excel (the superset). Normalize to SQL table (or Parquet) with one row per claim line and columns for every extracted field.
+
+Parse each crosswalk Excel (PlaceOfService, RevenueCode → description, HCPCS mapping, etc.) into normalized tables.
+
+Create a mapping sheet that maps semantic node names (e.g., claim_type, revenue_code, hcpcs) → superset column names. Store mapping metadata persistently.
+
+Vectorization & Vector DB
+
+Create vector documents for:
+
+Column descriptions: for each superset column, generate an LLM-produced human-readable description (column name + description).
+
+Crosswalk entries: each row of each crosswalk (e.g., PlaceOfService=11 → "Office") as its own doc.
+
+Mapping docs: mapping rules / synonyms / canonical node definitions.
+
+Index these documents in a vector DB (Qdrant / Milvus / Pinecone / Weaviate). Save metadata (type, original_id, source, column_name, coding_system, e.g., ICD10/HIPAA codes).
+
+Query pipeline (runtime)
+
+User Query (Streamlit UI) → Query Normalizer LLM (convert free text to canonical nodes & desired constraints).
+
+Retrieve top-k relevant vector docs (column descriptions + crosswalks + mappings) using semantic search.
+
+Use a second LLM step to compose the SQL (or search plan) — select the superset columns to pull, apply filters, join crosswalks if needed.
+
+Execute SQL on local DB (SQLite/Postgres). If result empty or low confidence, run self-heal iterations: transform node values via crosswalk suggestions or synonyms and re-run (up to 3 times). Present the best hits and provenance.
+
+UI / Controls
+
+Streamlit UI with: query input, “max self-heal attempts” slider (0–3), confidence threshold, manual mapping override UI (choose which columns to use), results viewer (table) with provenance links to vectors/crosswalk rows.
+
+2) Ingestion details & document model (what to index)
+
+Create three logical doc types in the vector DB:
+
+A. Column Description Docs (one doc per superset column)
+
+{
+  "id": "col_superset__patient_control_number",
+  "type": "column_description",
+  "column_name": "patient_control_number",
+  "table": "superset_claims",
+  "text": "patient_control_number — unique identifier assigned by provider for the claim line; often in 2010BX segment... [LLM-produced expanded description]",
+  "embedding": [...],
+  "metadata": {
+    "source": "superset.xlsx",
+    "original_header": "Patient Control #",
+    "datatype": "string",
+    "examples": ["PCN12345", "A-9876"]
+  }
+}
+
+
+B. Crosswalk Entry Docs (one doc per mapping row)
+
+{
+  "id": "crosswalk_pos__11",
+  "type": "crosswalk",
+  "domain": "place_of_service",
+  "key": "11",
+  "text": "POS 11 — Office: Location is office of physician or other practitioner.",
+  "metadata": {"source": "pos_crosswalk.xlsx","examples":[]}
+}
+
+
+C. Mapping / Ontology Docs (standard nodes)
+
+{
+  "id": "node__hcpcs",
+  "type": "node",
+  "name": "hcpcs",
+  "text": "HCPCS codes representing procedures/services. Node expects code values like '90832' or 'G0123'. Accept synonyms: 'cpt/hcpcs', 'procedure code'.",
+  "metadata": {"preferred_column": "proc_code_column"}
+}
+
+
+Store embeddings for text. Keep original strings in metadata for provenance.
+
+3) Embeddings, similarity and thresholds
+
+Use an embeddings model (OpenAI or an on-prem alternative). When you ingest, embed text fields.
+
+Retrieval settings:
+
+k=8 for first pass.
+
+Similarity threshold: start with cosine ≥ 0.78 as “highly relevant”, 0.65–0.78 as “possible”, <0.65 as “low”.
+
+Use reranker: after semantic retrieval, run a cheap LLM/ranker to score relevance against the query and keep top 4.
+
+4) Query -> Node extraction prompts (LLM prompt templates)
+
+Use a dedicated prompt to map user text to canonical nodes and values.
+
+System prompt (for node extraction)
+
+You are an EDI claims assistant. Convert the user's request into a JSON object with:
+- nodes: array of {node_name, requested_value, value_type (exact/approximate), confidence}
+- desired_output: {rows, columns, aggregation?}
+Return only JSON.
+
+
+User example prompt
+
+User: "I need a institutional claim for orthopaedic servical ambulatory service"
+
+Task: produce nodes like {claim_type: 'institutional', specialty: 'orthopaedic', service_location: 'ambulatory', site: 'surgical/ambulatory', anatomical_area: 'cervical' } plus suggestions for revenue codes/hcpcs that match.
+
+
+LLM returns structured JSON used downstream.
+
+5) Retrieval + mapping + SQL generation flow (pseudocode)
+# 1. Node extraction
+nodes = LLM_extract_nodes(user_query)
+
+# 2. Retrieve candidate columns + crosswalks
+retrieved = vector_db.search(query=user_query, top_k=8)
+
+# 3. Rerank and map columns
+mapped_columns = map_nodes_to_columns(nodes, retrieved, mapping_sheet)
+
+# 4. Compose SQL (LLM or template)
+sql = LLM_compose_sql(nodes, mapped_columns)
+
+# 5. Execute SQL
+rows = sql_db.execute(sql)
+
+# 6. If rows empty or low-confidence:
+for attempt in range(max_self_heal):
+    suggestions = propose_alternative_values(nodes, retrieved, crosswalks)
+    nodes = apply_suggestions(nodes, suggestions)
+    sql = LLM_compose_sql(nodes, mapped_columns)
+    rows = sql_db.execute(sql)
+    if rows:
+        break
+# 7. Return results + provenance
+return rows, {provenance, used_mapping_docs, similarity_scores}
+
+6) Self-heal logic (how AI “thinks outside”)
+
+When no results found, do these in-order:
+
+Value relaxation — change exact to approximate, broaden date ranges, treat singular → plural.
+
+Crosswalk expansion — look up crosswalks for synonyms or related codes (e.g., ambulatory surgical center POS vs revenue codes).
+
+Heuristic suggestions — fallback to top-N revenue codes/hcpcs from crosswalks most semantically similar to the node (use vector DB).
+
+Limit attempts to 3. Streamlit control lets user set max_attempts.
+
+7) SQL / local DB design (for speed)
+
+Load superset Excel into a Postgres or SQLite table superset_claims. Use appropriate indices on filter columns (dos, revenue_code, hcpcs, pos, claim_type).
+
+Optionally maintain a materialized view with frequently queried joins (e.g., superset JOIN crosswalk_pos ON superset.pos = crosswalk_pos.key).
+
+Suggested schema (simplified):
+
+superset_claims(
+  claim_id TEXT,
+  line_id INT,
+  patient_control_number TEXT,
+  claim_type TEXT,
+  revenue_code TEXT,
+  hcpcs_code TEXT,
+  modifiers TEXT,
+  pos TEXT,
+  dos DATE,
+  amount NUMERIC,
+  diagnosis_codes TEXT, -- JSON array
+  other_metadata JSONB
+)
+
+8) Mapping sheet usage & storage
+
+Save mapping sheet as both:
+
+SQL table column_mappings(node_name, superset_column, priority, manually_verified_bool)
+
+Vector docs (so LLM can semantically match nodes to columns even if exact mapping missing).
+
+Allow manual overrides from UI; capture those edits and mark manually_verified_bool = true.
+
+9) Prompts for SQL generation (concrete example)
+
+System prompt
+
+You are a SQL generator with access to the column mapping table. Given:
+- nodes JSON
+- mapped_columns: list of {node, column}
+Produce a parameterized SQL SELECT statement returning up to 200 rows, and explain any ambiguous mappings as comments.
+Return only: {"sql": "...", "explanations": [...]}
+
+10) Provenance & explainability (must)
+
+For each returned row, attach metadata: which superset columns matched which nodes, which crosswalk entry was used, and similarity scores. Present these in UI as an expandable row-level detail.
+
+11) Monitoring, metrics, and continuous improvement
+
+Log: query, nodes produced, retrieved docs ids + scores, SQL, execution results, user feedback (accept/reject).
+
+Metrics: hit_rate (first-run), average self-heal attempts, precision@k (manual label), user-corrected mapping frequency.
+
+Periodic retrain / curate: use high-value corrections to improve mapping docs and LLM prompt templates.
+
+12) Security, privacy, and compliance
+
+PII: superset contains PHI — follow HIPAA if needed. Encrypt data at rest, TLS in transit. Limit vector DB access; redact PHI when sending to external LLMs unless environment compliant.
+
+If using OpenAI embeddings/LLM, consider pseudonymizing or using private on-prem model.
+
+13) Implementation roadmap (practical steps)
+
+Schema + ETL: convert all excels → canonical SQL table + crosswalk tables.
+
+LLM column-descriptions: run an LLM to generate column descriptions for each superset header; save as vector docs.
+
+Index crosswalks: create crosswalk docs and index.
+
+Mapping sheet: seed mapping table with best guesses and mark auto=true.
+
+Pipeline code: implement Node extraction, retrieval, reranker, SQL composer, executor.
+
+Streamlit UI: query input, controls for max_self_heal, confidence thresholds, manual mapping editor, results + provenance viewer.
+
+Iteration: run test queries, collect corrections, update mappings.
+
+14) Example prompts & snippet you can paste into code
+
+Prompt: generate column description
+
+Input: Column header = "REV_CD", sample values = ["0450", "0360"], context: this is from an 837 institutional revenue code field.
+Task: produce a 1-2 sentence human-readable description (what it means, typical values) plus 3 short examples. Return JSON.
+
+
+Prompt: map user query to nodes (see earlier)
+
+15) Operational knobs to expose in Streamlit
+
+max_self_heal_attempts (0–3)
+
+initial_similarity_threshold
+
+k for vector retrieval
+
+Manual mapping override: drag-and-drop mapping node → column
+
+Quick “explain why” that prints LLM’s reasoning for chosen columns (useful for debugging)
+
+16) Example of an end-to-end scenario (short)
+
+User: “institutional claim for orthopaedic cervical ambulatory service”
+
+Node extraction returns {claim_type: institutional, specialty: orthopaedic, body_part: cervical, site: ambulatory}.
+
+Retrieval returns column_description: revenue_code, crosswalk hits for revenue codes used by ambulatory ortho.
+
+SQL composer picks revenue_code, hcpcs_code, pos, filters by POS mapped to ambulatory, and looks up HCPCS for ortho in crosswalk.
+
+SQL returns rows; if none, self-heal suggests widening POS to related POS codes and re-run
+
+
+
+
+
+
 I need build a streamlit application for one of my idea.
 
 User input like this:
