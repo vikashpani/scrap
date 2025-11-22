@@ -1,3 +1,39 @@
+import os
+from langchain_community.vectorstores import FAISS
+
+def create_faiss_from_docs(
+    docs, 
+    embeddings, 
+    persist_folder: str = "faiss_store"
+):
+    """
+    docs: list of VectorDoc objects with:
+        d.text: str
+        d.metadata: dict
+    """
+
+    # Correct extraction
+    texts = [d.text for d in docs]
+    metadatas = [d.metadata for d in docs]
+
+    # Build FAISS index (IDs are auto-handled)
+    vectordb = FAISS.from_texts(
+        texts=texts,
+        embedding=embeddings,
+        metadatas=metadatas
+    )
+
+    # Save FAISS locally
+    os.makedirs(persist_folder, exist_ok=True)
+    vectordb.save_local(persist_folder)
+
+    return vectordb
+
+
+
+
+
+
 """
 EDI -> Superset Vectorization + Search + SQL Compose (Azure OpenAI + LangChain + FAISS)
 
