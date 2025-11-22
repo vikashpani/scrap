@@ -1,4 +1,519 @@
 
+# edi_pipeline_streamlit.py
+"""
+EDA/Vector pipeline for 837-derived superset + crosswalks using:
+- Azure OpenAI via langchain_openai (LLM + embeddings)
+- FAISS vectorstore via langchain_community.vectorstores.FAISS
+- SQLite for superset + crosswalk storage
+- Streamlit UI
+
+Features:
+- Ingest superset excel (first sheet) to SQLite
+- Create LLM-generated column descriptions (uses first row(s) + LLM knowledge)
+- Create crosswalk row docs (if "description" column exists use it; otherwise LLM to find description column)
+- Index docs in FAISS (persisted) and reuse the index
+- Query flow: LLM node extraction -> FAISS retrieval -> mapping -> LLM SQL composer -> execute with LIMIT (max_sql_rows)
+- Self-heal attempts (configurable)
+- Token usage reporting for LLM calls (where available)
+"""
+
+import os
+import json
+import tempfile
+import typing as t
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import streamlit as st
+from sqlalchemy import create_engine, text
+
+# LangChain / Azure OpenAI imports (new package names)
+from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
+from langchain_core.messages import HumanMessage
+from langchain_community.vectorstores import FAISS
+
+# ---------- Configuration ----------
+DB_PATH = "superset.db"
+FAISS_DIR = "faiss_store"
+MAX_SQL_ROWS = 500
+
+# ---------- Data class ----------
+@dataclass
+class VectorDoc:
+    text: str
+    metadata: dict
+
+# ---------- Embeddings wrapper to guarantee float32 ----------
+class Float32AzureEmbeddings(AzureOpenAIEmbeddings):
+    """
+    Inherit AzureOpenAIEmbeddings and ensure outputs are float32 numpy lists (FAISS requires float32).
+    """
+    def embed_documents(self, texts: t.List[str]) -> t.List[t.List[float]]:
+        vectors = super().embed_documents(texts)
+        # ensure numpy float32 (LangChain may return lists or float64)
+        return [np.asarray(v, dtype=np.float32).tolist() for v in vectors]
+
+    def embed_query(self, text: str) -> t.List[float]:
+        v = super().embed_query(text)
+        return np.asarray(v, dtype=np.float32).tolist()
+
+# ---------- Helper: initialize Azure LLM & embeddings ----------
+def make_azure_llm(deployment_name: str, temperature: float = 0.0, max_tokens: int = 800):
+    if not all([os.getenv("AZURE_OPENAI_API_KEY") or "", os.getenv("AZURE_OPENAI_ENDPOINT") or ""]):
+        # We allow passing keys directly later; but prefer env variables
+        pass
+    llm = AzureChatOpenAI(deployment=deployment_name, temperature=temperature, max_tokens=max_tokens)
+    return llm
+
+def make_azure_embeddings(deployment_name: str, model: str | None = None):
+    emb = Float32AzureEmbeddings(deployment=deployment_name, model=model)
+    return emb
+
+# ---------- ETL: load excels to SQLite ----------
+def load_superset_to_sql(excel_path: str, table_name: str = "superset_claims", db_path: str = DB_PATH):
+    df = pd.read_excel(excel_path, sheet_name=0, dtype=object)
+    df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
+    engine = create_engine(f"sqlite:///{db_path}")
+    df.to_sql(table_name, engine, if_exists="replace", index=False)
+    return df, table_name
+
+def load_crosswalks_to_sql(excel_path: str, db_path: str = DB_PATH, prefix: str = "crosswalk"):
+    sheets = pd.read_excel(excel_path, sheet_name=None, dtype=object)
+    engine = create_engine(f"sqlite:///{db_path}")
+    created = []
+    for sheet_name, df in sheets.items():
+        cname = str(sheet_name).strip().lower().replace(" ", "_")
+        df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
+        table = f"{prefix}_{cname}"
+        df.to_sql(table, engine, if_exists="replace", index=False)
+        created.append(table)
+    return created
+
+# ---------- LLM: generate column description ----------
+def generate_column_description(llm, column_name: str, sample_values: t.List[str], extra_context: str = "") -> tuple[dict, dict]:
+    """
+    Ask LLM to produce a JSON description for a column using column_name + sample_values + extra_context.
+    Returns: (parsed_json, token_usage_dict_or_none)
+    """
+    prompt = f"""
+You are an expert EDI/837 data analyst. For the dataset column named "{column_name}" and sample values {sample_values}, produce a JSON with:
+- description: one-paragraph description of what this column likely contains (mention EDI segments if relevant)
+- notes: short notes about common formats, segments, or values
+- examples: up to 3 example values
+
+Include any hypothesis such as "this value is likely from SV2 or SV1 revenue/procedure" etc, using external LLM knowledge if necessary.
+Return JSON only.
+Context: {extra_context}
+"""
+    # Call Azure Chat LLM (langchain_openai) - returns a Generation object
+    resp = llm.generate([[HumanMessage(content=prompt)]])
+    # Extract text
+    text = resp.generations[0][0].text.strip()
+    # Extract token usage if available
+    token_usage = None
+    try:
+        # langchain may store llm output token usage in generations metadata
+        raw = resp.generations[0][0].llm_output
+        if isinstance(raw, dict) and "token_usage" in raw:
+            token_usage = raw["token_usage"]
+    except Exception:
+        token_usage = None
+    # Parse JSON
+    parsed = {}
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        # attempt to find JSON substring
+        try:
+            start = text.index("{")
+            parsed = json.loads(text[start:])
+        except Exception:
+            parsed = {"description": text, "notes": "", "examples": sample_values[:3]}
+    return parsed, token_usage
+
+# ---------- Crosswalk doc builder ----------
+def build_crosswalk_docs(crosswalk_excel_path: str, llm=None) -> t.List[VectorDoc]:
+    sheets = pd.read_excel(crosswalk_excel_path, sheet_name=None, dtype=object)
+    docs: t.List[VectorDoc] = []
+    for sheet_name, df in sheets.items():
+        clean_name = str(sheet_name).strip().lower().replace(" ", "_")
+        df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
+        # If there's an obvious description column (header includes 'desc' or 'description'), use it
+        desc_cols = [c for c in df.columns if "desc" in c or "description" in c or "label" in c]
+        for i, row in df.iterrows():
+            # create text: prefer description column; else join columns
+            if desc_cols:
+                desc = str(row[desc_cols[0]]) if pd.notna(row[desc_cols[0]]) else ""
+            else:
+                # fallback: join meaningful cols
+                pairs = []
+                for c in df.columns:
+                    v = row[c]
+                    if pd.notna(v):
+                        pairs.append(f"{c}: {v}")
+                desc = " | ".join(pairs[:6])
+            text = f"Crosswalk sheet={clean_name} row={i} | {desc}"
+            meta = {"type": "crosswalk", "sheet": clean_name, "row_index": int(i)}
+            docs.append(VectorDoc(text=text, metadata=meta))
+    return docs
+
+# ---------- Superset column docs builder (LLM driven) ----------
+def build_superset_column_docs(superset_excel_path: str, llm, sample_rows: int = 2, extra_context: str = "") -> tuple[t.List[VectorDoc], dict]:
+    df = pd.read_excel(superset_excel_path, sheet_name=0, dtype=object)
+    df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
+    docs: t.List[VectorDoc] = []
+    ingest_token_usage = {"llm_calls": [], "embedding_calls": []}
+    for col in df.columns:
+        samples = df[col].dropna().astype(str).head(sample_rows).tolist()
+        parsed, token_usage = generate_column_description(llm, col, samples, extra_context=extra_context)
+        # create text doc
+        desc_text = parsed.get("description") if isinstance(parsed, dict) else str(parsed)
+        examples = parsed.get("examples") if isinstance(parsed, dict) else samples[:3]
+        doc_text = f"Column: {col}\nDescription: {desc_text}\nExamples: {examples}"
+        meta = {"type": "column_description", "column_name": col, "source": Path(superset_excel_path).name}
+        docs.append(VectorDoc(text=doc_text, metadata=meta))
+        ingest_token_usage["llm_calls"].append(token_usage)
+    return docs, ingest_token_usage
+
+# ---------- FAISS creation / reuse ----------
+def persist_or_load_faiss(docs: t.List[VectorDoc], embeddings, persist_folder: str = FAISS_DIR, force_recreate: bool = False):
+    # If persisted index exists and not force_recreate -> load
+    if os.path.exists(persist_folder) and not force_recreate:
+        try:
+            vectordb = FAISS.load_local(persist_folder, embeddings)
+            return vectordb, {"loaded": True}
+        except Exception:
+            # If load fails, fall through to recreate
+            pass
+    # Prepare texts & metadatas
+    texts = [str(d.text) for d in docs]
+    metadatas = [d.metadata for d in docs]
+    # Sanity: ensure all texts are strings and non-empty
+    for i, t in enumerate(texts):
+        if not isinstance(t, str):
+            texts[i] = str(t)
+        if texts[i].strip() == "":
+            texts[i] = "[empty]"
+    # Create FAISS index via langchain_community wrapper
+    vectordb = FAISS.from_texts(texts=texts, embedding=embeddings, metadatas=metadatas)
+    os.makedirs(persist_folder, exist_ok=True)
+    vectordb.save_local(persist_folder)
+    return vectordb, {"loaded": False}
+
+# ---------- Node extraction & SQL composer ----------
+def extract_nodes(llm, user_query: str) -> tuple[dict, dict]:
+    prompt = f"""
+You are an assistant that extracts structured nodes from a user query about claims data.
+Return JSON only:
+{{ "nodes": [ {{ "name": "<node>", "value": "<value>", "value_type": "exact|approximate|list" }} ], "notes": "" }}
+User query: \"{user_query}\"
+"""
+    resp = llm.generate([[HumanMessage(content=prompt)]])
+    text = resp.generations[0][0].text.strip()
+    token_usage = None
+    try:
+        raw = resp.generations[0][0].llm_output
+        if raw and "token_usage" in raw:
+            token_usage = raw["token_usage"]
+    except Exception:
+        token_usage = None
+    try:
+        data = json.loads(text)
+    except Exception:
+        try:
+            start = text.index("{")
+            data = json.loads(text[start:])
+        except Exception:
+            data = {"nodes": [], "notes": text}
+    return data, token_usage
+
+def compose_sql(llm, nodes: dict, mapped_columns: dict, table_name: str = "superset_claims") -> tuple[dict, dict]:
+    """
+    Ask LLM to compose a parameterized SQL given nodes and mapping.
+    Returns (sql_json, token_usage)
+    """
+    prompt = f"""
+You are a SQL generator. Given table '{table_name}', nodes: {json.dumps(nodes)} and mapped_columns: {json.dumps(mapped_columns)},
+produce JSON only: {{ "sql": "<SQL SELECT ...>", "params": {{ ... }}, "explanation": ["..."] }}
+Limit rows to {MAX_SQL_ROWS}.
+Use parameterized style :p1, :p2 for SQLAlchemy.
+"""
+    resp = llm.generate([[HumanMessage(content=prompt)]])
+    text = resp.generations[0][0].text.strip()
+    token_usage = None
+    try:
+        raw = resp.generations[0][0].llm_output
+        if raw and "token_usage" in raw:
+            token_usage = raw["token_usage"]
+    except Exception:
+        token_usage = None
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        try:
+            start = text.index("{")
+            parsed = json.loads(text[start:])
+        except Exception:
+            parsed = {"sql": "", "params": {}, "explanation": [text]}
+    return parsed, token_usage
+
+# ---------- Map nodes to candidate columns using FAISS ----------
+def map_nodes_to_columns(nodes: dict, vectordb, top_k: int = 6) -> dict:
+    mapped = {}
+    for n in nodes.get("nodes", []):
+        query_text = f"node: {n.get('name')} value: {n.get('value')}"
+        # returns list of Document objects with metadata
+        docs_and_scores = vectordb.similarity_search_with_score(query_text, k=top_k)
+        candidates = []
+        for doc, score in docs_and_scores:
+            md = doc.metadata or {}
+            if md.get("type") == "column_description":
+                candidates.append({"column": md.get("column_name"), "score": 1.0 - score, "metadata": md})
+        mapped[n.get("name")] = candidates
+    return mapped
+
+# ---------- Execution + self-heal ----------
+def execute_sql_with_self_heal(engine, sql_json: dict, vectordb, nodes: dict, llm, max_attempts: int = 3):
+    attempt = 0
+    current_nodes = json.loads(json.dumps(nodes))  # deep copy
+    details = {"attempts": 0, "healed": []}
+    while attempt <= max_attempts:
+        attempt += 1
+        details["attempts"] = attempt
+        sql = sql_json.get("sql", "")
+        params = sql_json.get("params", {}) or {}
+        rows = []
+        if sql:
+            try:
+                with engine.connect() as conn:
+                    q = f"SELECT * FROM ({sql}) LIMIT {MAX_SQL_ROWS}"
+                    res = conn.execute(text(q), params)
+                    rows = [dict(r) for r in res.fetchall()]
+            except Exception as e:
+                rows = []
+        if rows:
+            return rows, details
+        # No rows -> try self-heal (use similar crosswalk docs to suggest alternative values)
+        if attempt > max_attempts:
+            break
+        suggestions = []
+        for n in current_nodes.get("nodes", []):
+            q = f"{n.get('name')} {n.get('value')}"
+            res = vectordb.similarity_search_with_score(q, k=4)
+            for doc, score in res:
+                if doc.metadata.get("type") == "crosswalk":
+                    suggestions.append({"node": n.get("name"), "doc_text": doc.page_content, "score": score})
+        if not suggestions:
+            break
+        # Apply first suggestion heuristically
+        for s in suggestions:
+            name = s["node"]
+            text = s["doc_text"]
+            # naive parse: find token after ':' or numeric code
+            new_val = None
+            if ":" in text:
+                try:
+                    new_val = text.split(":", 1)[1].strip().split("|")[0].strip()
+                except Exception:
+                    new_val = None
+            if new_val is None:
+                import re
+                m = re.search(r"\b([A-Z0-9\-]{2,8})\b", text)
+                if m:
+                    new_val = m.group(1)
+            if new_val:
+                for nn in current_nodes.get("nodes", []):
+                    if nn.get("name") == name:
+                        details["healed"].append({"node": name, "old": nn.get("value"), "new": new_val})
+                        nn["value"] = new_val
+        # Remap and recompose SQL
+        mapped = map_nodes_to_columns(current_nodes, vectordb)
+        mapped_cols = {k: (mapped[k][0]["column"] if mapped.get(k) and len(mapped[k]) > 0 else None) for k in mapped}
+        sql_json, _ = compose_sql(llm, current_nodes, mapped_cols)
+    return [], details
+
+# ---------- Streamlit UI ----------
+st.set_page_config(page_title="EDI Vector Search (Azure + FAISS)", layout="wide")
+st.title("EDI Vector Search + SQL Composer (Azure OpenAI + FAISS)")
+
+st.sidebar.header("Azure / Deployment settings (can use env vars or enter here)")
+azure_endpoint = st.sidebar.text_input("Azure Endpoint (optional, set via env AZURE_OPENAI_ENDPOINT)", value=os.getenv("AZURE_OPENAI_ENDPOINT", ""))
+azure_api_key = st.sidebar.text_input("Azure API Key (optional, set via env AZURE_OPENAI_API_KEY)", value=os.getenv("AZURE_OPENAI_API_KEY", ""))
+azure_api_version = st.sidebar.text_input("API version", value=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01"))
+
+chat_deployment = st.sidebar.text_input("Chat deployment name (your Azure deployment)", value="")
+embed_deployment = st.sidebar.text_input("Embedding deployment name (your Azure embedding deployment)", value="")
+
+# Save envs if provided
+if azure_endpoint:
+    os.environ["AZURE_OPENAI_ENDPOINT"] = azure_endpoint
+if azure_api_key:
+    os.environ["AZURE_OPENAI_API_KEY"] = azure_api_key
+if azure_api_version:
+    os.environ["AZURE_OPENAI_API_VERSION"] = azure_api_version
+
+st.sidebar.markdown("---")
+st.sidebar.header("Files to upload")
+superset_upload = st.sidebar.file_uploader("Superset Excel (first sheet is used)", type=["xlsx", "xls"])
+crosswalk_upload = st.sidebar.file_uploader("Crosswalk Excel (multiple sheets)", type=["xlsx", "xls"])
+
+st.sidebar.markdown("---")
+force_recreate = st.sidebar.checkbox("Force recreate FAISS (regenerate column descriptions)", value=False)
+
+st.sidebar.header("Behavior")
+max_self_heal = st.sidebar.slider("Max self-heal attempts", 0, 3, 2)
+k_retrieval = st.sidebar.slider("FAISS retrieval k", 1, 12, 8)
+
+# In-memory session state for tokens usage
+if "ingest_token_usage" not in st.session_state:
+    st.session_state["ingest_token_usage"] = {"llm_calls": [], "embedding_calls": []}
+if "query_token_usage" not in st.session_state:
+    st.session_state["query_token_usage"] = {"llm_calls": [], "embedding_calls": []}
+
+# Ingest step
+if st.sidebar.button("Ingest / (re)create FAISS and DB"):
+    if not superset_upload or not crosswalk_upload:
+        st.sidebar.error("Please upload both superset and crosswalk Excel files.")
+    elif not chat_deployment or not embed_deployment:
+        st.sidebar.error("Provide both chat and embedding deployment names.")
+    else:
+        # Save uploaded files to temp
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as t1:
+            t1.write(superset_upload.getbuffer())
+            sup_path = t1.name
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as t2:
+            t2.write(crosswalk_upload.getbuffer())
+            cross_path = t2.name
+
+        # 1) write excels to SQLite
+        df_sup, sup_table = load_superset_to_sql(sup_path)
+        cw_tables = load_crosswalks_to_sql(cross_path)
+
+        st.sidebar.success(f"Loaded superset ({len(df_sup)} rows) -> table {sup_table} ; crosswalks -> {cw_tables}")
+
+        # 2) init azure LLM and embeddings via langchain_openai
+        try:
+            llm = AzureChatOpenAI(deployment=chat_deployment, temperature=0.0, max_tokens=800)
+            embeddings = Float32AzureEmbeddings(deployment=embed_deployment)
+        except Exception as e:
+            st.sidebar.error(f"Failed to init Azure LLM/Embeddings: {e}")
+            st.stop()
+
+        # 3) build column description docs (reuse if FAISS exists unless force_recreate)
+        # Build docs list = superset column docs + crosswalk docs
+        sup_docs, ingest_llm_usages = build_superset_column_docs(sup_path, llm, sample_rows=2, extra_context="This data comes from 837 EDI derived excel.")
+        cw_docs = build_crosswalk_docs(cross_path, llm=None)
+        all_docs = sup_docs + cw_docs
+
+        # Save token usage for ingest LLM calls
+        st.session_state["ingest_token_usage"]["llm_calls"].extend([u for u in ingest_llm_usages.get("llm_calls", []) if u is not None])
+
+        # 4) create or load FAISS (persist), ensure embeddings wrapper used
+        try:
+            vectordb, info = persist_or_load_faiss(all_docs, embeddings, persist_folder=FAISS_DIR, force_recreate=force_recreate)
+            if info.get("loaded"):
+                st.sidebar.success("Loaded existing FAISS index.")
+            else:
+                st.sidebar.success("Created & persisted new FAISS index.")
+        except Exception as e:
+            st.sidebar.error(f"FAISS creation failed: {e}")
+            st.stop()
+
+# Query section
+st.header("Run Query")
+user_q = st.text_input("Enter natural language query (e.g. 'institutional claim for orthopaedic cervical ambulatory service')")
+
+if st.button("Run Query"):
+    if not user_q:
+        st.error("Type a query first")
+    else:
+        # make sure vector DB exists
+        if not os.path.exists(FAISS_DIR):
+            st.error("No FAISS index present. Ingest data first.")
+            st.stop()
+        if not chat_deployment or not embed_deployment:
+            st.error("Please provide deployments in sidebar.")
+            st.stop()
+
+        # init LLM & embeddings (if not already)
+        llm = AzureChatOpenAI(deployment=chat_deployment, temperature=0.0, max_tokens=800)
+        embeddings = Float32AzureEmbeddings(deployment=embed_deployment)
+        vectordb = FAISS.load_local(FAISS_DIR, embeddings)
+
+        # 1) extract nodes
+        nodes, node_usage = extract_nodes(llm, user_q)
+        st.subheader("Extracted nodes")
+        st.json(nodes)
+        st.session_state["query_token_usage"]["llm_calls"].append(node_usage)
+
+        # 2) map nodes to candidate columns via FAISS
+        mapped = map_nodes_to_columns(nodes, vectordb, top_k=k_retrieval)
+        st.subheader("Candidate column mappings (top candidates)")
+        st.write(mapped)
+
+        # 3) prepare mapping selection (auto-choose top candidate per node; allow user edits)
+        auto_map = {n: (mapped[n][0]["column"] if mapped.get(n) and len(mapped[n])>0 else None) for n in mapped}
+        st.subheader("Auto mapping (editable)")
+        final_map = {}
+        for node_name, cand in auto_map.items():
+            new = st.text_input(f"Column for node '{node_name}'", value=cand or "")
+            final_map[node_name] = new if new.strip() != "" else None
+        st.write("Final mapping used:", final_map)
+
+        # 4) ask LLM to compose SQL for mapped columns
+        sql_json, sql_usage = compose_sql(llm, nodes, final_map)
+        st.subheader("Generated SQL")
+        st.code(sql_json.get("sql", ""))
+        st.write("Params:", sql_json.get("params", {}))
+        st.session_state["query_token_usage"]["llm_calls"].append(sql_usage)
+
+        # 5) execute and self-heal
+        engine = create_engine(f"sqlite:///{DB_PATH}")
+        rows, details = execute_sql_with_self_heal(engine, sql_json, vectordb, nodes, llm, max_attempts=max_self_heal)
+        st.subheader("Query Results (limited to 500 rows)")
+        if rows:
+            st.dataframe(pd.DataFrame(rows))
+        else:
+            st.warning("No rows found.")
+
+        st.subheader("Execution details")
+        st.write(details)
+
+        # 6) Show token usage summary
+        st.subheader("Token usage summary (LLM calls where available)")
+        ingest_llm = st.session_state["ingest_token_usage"]["llm_calls"]
+        query_llm = st.session_state["query_token_usage"]["llm_calls"]
+
+        def sum_tokens(usages):
+            total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "counts": 0}
+            for u in usages:
+                if not u:
+                    continue
+                # Azure/OpenAI usage shape may vary; handle keys carefully
+                if isinstance(u, dict):
+                    # example: {'prompt_tokens': n, 'completion_tokens': m, 'total_tokens': p}
+                    pt = int(u.get("prompt_tokens") or 0)
+                    ct = int(u.get("completion_tokens") or 0)
+                    tt = int(u.get("total_tokens") or (pt + ct))
+                    total["prompt_tokens"] += pt
+                    total["completion_tokens"] += ct
+                    total["total_tokens"] += tt
+                    total["counts"] += 1
+            return total
+
+        total_ingest = sum_tokens(ingest_llm)
+        total_query = sum_tokens(query_llm)
+
+        st.write("Ingest LLM total tokens:", total_ingest)
+        st.write("Query LLM total tokens:", total_query)
+        st.write("Note: embedding token usage may not be reported by LangChain / Azure; if your embedding client reports usage, it can be added similarly.")
+
+
+
+
+
 class Float32AzureEmbeddings(AzureOpenAIEmbeddings):
     def embed_documents(self, texts):
         vectors = super().embed_documents(texts)
