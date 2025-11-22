@@ -1,3 +1,17 @@
+
+class Float32AzureEmbeddings(AzureOpenAIEmbeddings):
+    def embed_documents(self, texts):
+        vectors = super().embed_documents(texts)
+        # Convert Azure float64 → float32
+        return [np.asarray(v, dtype=np.float32).tolist() for v in vectors]
+
+    def embed_query(self, text):
+        v = super().embed_query(text)
+        return np.asarray(v, dtype=np.float32).tolist()
+
+
+
+
 import os
 from langchain_community.vectorstores import FAISS
 
