@@ -1,4 +1,14 @@
 
+Led the AI-automation workstream in a 50-member team**, coordinating test engineers and SMEs across claims, letters, contracts, and DW-comparison functions.
+* **Established operating rhythms** including weekly standups, biweekly design reviews, and living documentation to accelerate onboarding and knowledge reuse.
+* **Coached peers on pipelines, letter-parsing, and parallel-testing utilities**, running recurring trainings and technical huddles to uplift team capability.
+* **Translated academic and industry research into practical automation experiments**, guiding solution design and PoC execution.
+* **Introduced retry/failover mechanisms and real-time alerting**, reducing bottleneck resolution from days to hours.
+* **Drove ~40% uplift in delivery velocity, reduced rework/leakage by 25–30%, and ensured >95% of insights were delivered within 3 hours.**
+* **Enabled adoption of automation tools and practices across product lines and regions.**
+
+
+
 
 You said:
 Automation for Test Data Identification using RAG enabled Test Data extraction
