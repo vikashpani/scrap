@@ -1,3 +1,232 @@
+# =========================
+# 837 CLAIM MATCHER – FULL SINGLE FILE
+# =========================
+
+import streamlit as st
+import pandas as pd
+import sqlite3
+import os
+import re
+from langgraph.graph import StateGraph
+
+# =========================
+# CONFIG
+# =========================
+
+DB_PATH = "claims.db"
+
+TABLES = [
+    "MCAD_data_chunk_1",
+    "MCAD_data_chunk_2",
+    "MCAD_data_chunk_3",
+    "MCAD_data_chunk_4",
+    "MCAD_data_chunk_5"
+]
+
+COLUMN_MAP = {
+    "Claim Type": "TYPE_OFCLAIM",
+    "Service": "HCPS_CPT_CODE",
+    "Revenue Code": "REVENUE_CODE",
+    "Place of service": "TOB_POS",
+    "Diagnosis code": "PRINCIPAL_DIAGNOSIS"
+}
+
+OUTPUT_DIR = "output"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# =========================
+# RANGE EXPANSION ENGINE
+# =========================
+
+def split_prefix_numeric(code):
+    """
+    H54.2X11 -> ('H54.2X', 11)
+    0250     -> ('', 250)
+    """
+    match = re.match(r"^([A-Z0-9\.]*?)(\d+)$", code)
+    if not match:
+        return None, None
+    return match.group(1), int(match.group(2))
+
+
+def expand_range(start, end):
+    sp, sn = split_prefix_numeric(start)
+    ep, en = split_prefix_numeric(end)
+
+    if sp != ep:
+        raise ValueError(f"Invalid range: {start}-{end}")
+
+    width = len(re.search(r"\d+$", start).group())
+
+    return [
+        f"{sp}{str(i).zfill(width)}"
+        for i in range(sn, en + 1)
+    ]
+
+
+def parse_codes(raw_value):
+    """
+    Handles:
+    - NOT
+    - ;
+    - ranges
+    """
+    raw_value = raw_value.strip()
+    negate = raw_value.upper().startswith("NOT ")
+
+    if negate:
+        raw_value = raw_value[4:].strip()
+
+    codes = []
+
+    for part in raw_value.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+
+        if "-" in part:
+            start, end = part.split("-")
+            codes.extend(expand_range(start.strip(), end.strip()))
+        else:
+            codes.append(part)
+
+    return negate, list(set(codes))
+
+
+# =========================
+# SQL CONDITION BUILDER
+# =========================
+
+def build_condition(column, raw_value, params):
+    negate, codes = parse_codes(raw_value)
+
+    if not codes:
+        return ""
+
+    placeholders = ",".join(["?"] * len(codes))
+    params.extend(codes)
+
+    condition = f"{column} IN ({placeholders})"
+
+    if negate:
+        condition = f"NOT ({condition})"
+
+    return condition
+
+
+def build_sql(row, table):
+    conditions = []
+    params = []
+
+    for excel_col, db_col in COLUMN_MAP.items():
+        value = row.get(excel_col, "")
+        if value:
+            cond = build_condition(db_col, value, params)
+            if cond:
+                conditions.append(cond)
+
+    sql = f"SELECT *, '{table}' AS source_table FROM {table}"
+    if conditions:
+        sql += " WHERE " + " AND ".join(conditions)
+
+    return sql, params
+
+
+# =========================
+# SQLITE SEARCH
+# =========================
+
+def search_claims(row):
+    conn = sqlite3.connect(DB_PATH)
+    results = []
+
+    for table in TABLES:
+        sql, params = build_sql(row, table)
+        try:
+            df = pd.read_sql_query(sql, conn, params=params)
+            if not df.empty:
+                results.append(df)
+        except Exception as e:
+            print(f"[ERROR] {table}: {e}")
+
+    conn.close()
+    return pd.concat(results, ignore_index=True) if results else pd.DataFrame()
+
+
+# =========================
+# LANGGRAPH AGENT
+# =========================
+
+class ClaimState(dict):
+    pass
+
+
+def manual_agent(state: ClaimState):
+    state["results"] = search_claims(state["row"])
+    return state
+
+
+graph = StateGraph(ClaimState)
+graph.add_node("manual_search", manual_agent)
+graph.set_entry_point("manual_search")
+agent = graph.compile()
+
+# =========================
+# PROCESSING
+# =========================
+
+def read_excel(file):
+    return pd.read_excel(file, dtype=str).fillna("")
+
+
+def process_file(df):
+    output = {}
+
+    for _, row in df.iterrows():
+        variant = row["Variant ID"]
+        state = agent.invoke({"row": row})
+
+        if variant not in output:
+            output[variant] = []
+
+        if not state["results"].empty:
+            output[variant].append(state["results"])
+
+    return output
+
+
+def save_results(results):
+    for variant, dfs in results.items():
+        pd.concat(dfs, ignore_index=True).to_excel(
+            f"{OUTPUT_DIR}/{variant}.xlsx",
+            index=False
+        )
+
+# =========================
+# STREAMLIT UI
+# =========================
+
+st.set_page_config("837 Claim Matcher", layout="wide")
+st.title("837 EDI Claim Matcher")
+
+uploaded_file = st.file_uploader("Upload Input Excel", type=["xlsx"])
+mode = st.radio("Search Mode", ["Manual", "LLM (Coming Soon)"])
+
+if st.button("Run Matching") and uploaded_file:
+    df = read_excel(uploaded_file)
+    results = process_file(df)
+    save_results(results)
+    st.success("Matching complete. Variant-wise Excel files generated.")
+
+
+
+
+
+
+
+
+
+
 # edi_pipeline_bge_small.py
 """
 EDI Vector Pipeline — BGE-small embeddings (local CPU) + Azure Chat LLM for prompts
