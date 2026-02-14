@@ -18,6 +18,193 @@ COLUMN_MAP = {
 }
 
 # =========================
+# RANGE + PARSING UTILITIES
+# =========================
+def split_prefix_numeric(code: str):
+    m = re.match(r"^([A-Z0-9\.]*?)(\d+)$", code)
+    if not m:
+        raise ValueError(f"Invalid code format: {code}")
+    return m.group(1), int(m.group(2)), len(m.group(2))
+
+
+def expand_range(start: str, end: str) -> List[str]:
+    sp, sn, sw = split_prefix_numeric(start)
+    ep, en, ew = split_prefix_numeric(end)
+
+    if sp != ep:
+        raise ValueError(f"Invalid range: {start}-{end}")
+
+    width = max(sw, ew)
+    return [f"{sp}{str(i).zfill(width)}" for i in range(sn, en + 1)]
+
+
+def parse_codes(raw: str) -> Tuple[bool, List[str]]:
+    raw = raw.strip()
+    negate = False
+
+    # STEP 1: detect NOT
+    if raw.upper().startswith("NOT "):
+        negate = True
+        raw = raw[4:].strip()
+
+    # normalize spaces around dash
+    raw = re.sub(r"\s*-\s*", "-", raw)
+
+    codes = []
+
+    for part in raw.split(";"):
+        part = part.strip()
+
+        # SAFETY: ignore leftover NOT
+        if part.upper().startswith("NOT"):
+            continue
+
+        if "-" in part:
+            start, end = part.split("-", 1)
+            if start.upper().startswith("NOT"):
+                continue
+            codes.extend(expand_range(start.strip(), end.strip()))
+        else:
+            codes.append(part)
+
+    return negate, sorted(set(codes))
+
+
+# =========================
+# DEBUG HELPERS
+# =========================
+def debug_rule(row):
+    print("\n--- RULE PARSE DEBUG ---")
+    for excel_col in COLUMN_MAP:
+        if excel_col in row and not pd.isna(row[excel_col]):
+            negate, codes = parse_codes(str(row[excel_col]))
+            print(f"{excel_col}:")
+            print(f"  NEGATE = {negate}")
+            print(f"  CODES  = {codes[:10]}{'...' if len(codes) > 10 else ''}")
+
+
+def debug_sql(sql, params):
+    s = sql
+    for p in params:
+        s = s.replace("?", f"'{p}'", 1)
+    return s
+
+
+# =========================
+# SQL BUILDER
+# =========================
+def build_where(row: pd.Series):
+    clauses = []
+    params = []
+
+    for excel_col, csv_col in COLUMN_MAP.items():
+        if excel_col not in row or pd.isna(row[excel_col]):
+            continue
+
+        negate, codes = parse_codes(str(row[excel_col]))
+        if not codes:
+            continue
+
+        placeholders = ",".join(["?"] * len(codes))
+        op = "NOT IN" if negate else "IN"
+
+        # Normalize CSV + input for safer match
+        clauses.append(
+            f"UPPER(TRIM(\"{csv_col}\")) {op} ({placeholders})"
+        )
+        params.extend([c.upper() for c in codes])
+
+    if not clauses:
+        return None, None
+
+    return " AND ".join(clauses), params
+
+
+# =========================
+# SEARCH FUNCTION (FAST)
+# =========================
+def search_variant(con, row, debug=False):
+    where, params = build_where(row)
+    if not where:
+        return None
+
+    sql = f"""
+        SELECT *
+        FROM read_csv(
+            '{CLAIMS_CSV}',
+            delim='|',
+            header=true,
+            all_varchar=true,
+            ignore_errors=true
+        )
+        WHERE {where}
+        LIMIT 1
+    """
+
+    if debug:
+        debug_rule(row)
+        print("\n--- SQL DEBUG ---")
+        print(debug_sql(sql, params))
+
+    result = con.execute(sql, params).df()
+    if not result.empty:
+        return result
+
+    return None
+
+
+# =========================
+# MAIN
+# =========================
+def main():
+    con = duckdb.connect()
+
+    input_df = pd.read_excel(INPUT_EXCEL)
+
+    for i, rule_row in input_df.iterrows():
+        variant = rule_row["Variant ID"]
+        print(f"\nProcessing Variant: {variant}")
+
+        match = search_variant(con, rule_row, debug=(i < 2))
+
+        if match is not None:
+            match.to_excel(f"{variant}.xlsx", index=False)
+            print("✔ MATCH FOUND")
+        else:
+            print("✘ NO MATCH")
+
+    con.close()
+    print("\nDONE")
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+
+import duckdb
+import pandas as pd
+import re
+from typing import List, Tuple
+
+# =========================
+# CONFIG
+# =========================
+CLAIMS_CSV = "claims.csv"
+INPUT_EXCEL = "input.xlsx"
+
+COLUMN_MAP = {
+    "Claim Type": "TYPE_OF_CLAIM",
+    "Service": "HCPS CPT CODE",
+    "Revenue Code": "REVENUE_CODE",
+    "Place of service": "TOB POS",
+    "Diagnosis code": "PRINCIPAL DIAGNOSIS",
+}
+
+# =========================
 # RANGE HANDLING
 # =========================
 def normalize_range_text(value: str) -> str:
