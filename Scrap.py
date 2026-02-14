@@ -1,3 +1,26 @@
+con = duckdb.connect()
+con.execute(f"PRAGMA temp_directory='{TEMP_DIR}'")
+
+print("\n📋 CSV COLUMN NAMES AS SEEN BY DUCKDB:\n")
+
+cols = con.execute(f"""
+    SELECT *
+    FROM read_csv(
+        '{CLAIMS_CSV}',
+        delim='|',
+        header=true,
+        all_varchar=true,
+        sample_size=1
+    )
+    LIMIT 0
+""").df().columns
+
+for i, c in enumerate(cols, 1):
+    print(f"{i:03d}: [{c}]")
+
+
+
+
 import duckdb
 import pandas as pd
 import os
