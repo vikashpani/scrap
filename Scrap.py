@@ -1,6 +1,158 @@
 import duckdb
 import pandas as pd
 import re
+
+# =========================
+# FILE PATHS
+# =========================
+CLAIMS_CSV = "claims.csv"
+INPUT_EXCEL = "input.xlsx"
+
+# =========================
+# EXCEL → LOGICAL FIELD MAP
+# =========================
+COLUMN_MAP = {
+    "Claim Type": "TYPE_OF_CLAIM",
+    "Service": "HCPS CPT CODE",
+    "Revenue Code": "REVENUE_CODE",
+    "Place of service": "TOB POS",
+    "Diagnosis code": "PRINCIPAL DIAGNOSIS",
+}
+
+# =========================
+# CODE PARSING
+# =========================
+def expand_alpha_numeric_range(start, end):
+    m1 = re.match(r"([A-Z\.]*)(\d+.*)", start)
+    m2 = re.match(r"([A-Z\.]*)(\d+.*)", end)
+    if not m1 or not m2 or m1.group(1) != m2.group(1):
+        return [start, end]
+
+    prefix = m1.group(1)
+    s = int(re.findall(r"\d+", start)[-1])
+    e = int(re.findall(r"\d+", end)[-1])
+    width = len(re.findall(r"\d+", start)[-1])
+
+    return [f"{prefix}{str(i).zfill(width)}" for i in range(s, e + 1)]
+
+
+def parse_codes(raw):
+    raw = raw.strip()
+    negate = False
+
+    if raw.upper().startswith("NOT "):
+        negate = True
+        raw = raw[4:].strip()
+
+    raw = re.sub(r"\s*-\s*", "-", raw)
+
+    values = []
+    for part in raw.split(";"):
+        part = part.strip()
+        if "-" in part:
+            a, b = part.split("-", 1)
+            values.extend(expand_alpha_numeric_range(a, b))
+        else:
+            values.append(part)
+
+    return negate, list(set(values))
+
+
+# =========================
+# MAIN
+# =========================
+def main():
+    con = duckdb.connect()
+
+    print("📥 Loading CSV once (this may take a minute)...")
+
+    con.execute(f"""
+        CREATE OR REPLACE TABLE claims AS
+        SELECT * FROM read_csv(
+            '{CLAIMS_CSV}',
+            delim='|',
+            header=true,
+            all_varchar=true,
+            ignore_errors=true
+        )
+    """)
+
+    # normalize column names
+    cols = con.execute("PRAGMA table_info('claims')").df()
+    col_map = {
+        c["name"]: c["name"].strip().upper()
+        for _, c in cols.iterrows()
+    }
+
+    for old, new in col_map.items():
+        if old != new:
+            con.execute(f'ALTER TABLE claims RENAME COLUMN "{old}" TO "{new}"')
+
+    print("✅ CSV loaded and normalized")
+
+    rules = pd.read_excel(INPUT_EXCEL)
+
+    for idx, row in rules.iterrows():
+        variant = row["Variant ID"]
+        print(f"\n🔍 Variant {variant}")
+
+        where_clauses = []
+        params = []
+
+        for excel_col, logical_col in COLUMN_MAP.items():
+            if excel_col not in row or pd.isna(row[excel_col]):
+                continue
+
+            negate, values = parse_codes(str(row[excel_col]))
+            if not values:
+                continue
+
+            placeholders = ",".join(["?"] * len(values))
+            op = "NOT IN" if negate else "IN"
+
+            where_clauses.append(
+                f'UPPER(TRIM("{logical_col}")) {op} ({placeholders})'
+            )
+            params.extend([v.upper() for v in values])
+
+        if not where_clauses:
+            print("⚠ No filters — skipped")
+            continue
+
+        sql = f"""
+            SELECT *
+            FROM claims
+            WHERE {' AND '.join(where_clauses)}
+            LIMIT 1
+        """
+
+        print("🧠 SQL:")
+        print(sql)
+        print("🧪 Params:", params[:10])
+
+        df = con.execute(sql, params).df()
+
+        if not df.empty:
+            out = f"{variant}.xlsx"
+            df.to_excel(out, index=False)
+            print(f"✅ MATCH FOUND → {out}")
+        else:
+            print("❌ No match")
+
+    con.close()
+    print("\n🎉 DONE")
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+import duckdb
+import pandas as pd
+import re
 from typing import List, Tuple
 
 # =========================
