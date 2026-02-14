@@ -1,3 +1,258 @@
+
+# ==========================================================
+# 837 EDI CLAIM MATCHER – FINAL STABLE VERSION
+# ==========================================================
+
+import streamlit as st
+import pandas as pd
+import sqlite3
+import os
+import re
+from typing import TypedDict
+from langgraph.graph import StateGraph
+
+# ==========================================================
+# CONFIG
+# ==========================================================
+
+DB_PATH = "claims.db"
+
+TABLES = [
+    "MCAD data chunk 1",
+    "MCAD data chunk 2",
+    "MCAD data chunk 3",
+    "MCAD data chunk 4",
+    "MCAD data chunk 5",
+]
+
+COLUMN_MAP = {
+    "Claim Type": "TYPE OFCLAIM",
+    "Service": "HCPS CPT CODE",
+    "Revenue Code": "REVENUE_CODE",
+    "Place of service": "TOB POS",
+    "Diagnosis code": "PRINCIPAL_DIAGNOSIS",
+}
+
+OUTPUT_DIR = "output"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# ==========================================================
+# NORMALIZATION UTILITIES
+# ==========================================================
+
+def normalize_range_text(value: str) -> str:
+    """
+    Converts:
+    H54.2X11 - H54.2X22
+    H54.2X11- H54.2X22
+    into:
+    H54.2X11-H54.2X22
+    """
+    return re.sub(r"\s*-\s*", "-", value.strip())
+
+
+# ==========================================================
+# RANGE EXPANSION ENGINE (CRITICAL)
+# ==========================================================
+
+def split_prefix_numeric(code: str):
+    """
+    H54.2X11 -> ('H54.2X', 11, 2)
+    0250     -> ('', 250, 4)
+    """
+    m = re.match(r"^([A-Z0-9\.]*?)(\d+)$", code)
+    if not m:
+        raise ValueError(f"Invalid code format: {code}")
+    return m.group(1), int(m.group(2)), len(m.group(2))
+
+
+def expand_range(start: str, end: str):
+    sp, sn, sw = split_prefix_numeric(start)
+    ep, en, ew = split_prefix_numeric(end)
+
+    if sp != ep:
+        raise ValueError(f"Invalid range prefix: {start}-{end}")
+
+    width = max(sw, ew)
+
+    return [
+        f"{sp}{str(i).zfill(width)}"
+        for i in range(sn, en + 1)
+    ]
+
+
+# ==========================================================
+# PARSE CELL VALUE → CODES
+# ==========================================================
+
+def parse_codes(raw_value: str):
+    """
+    Handles:
+    - NOT
+    - ;
+    - ranges
+    - mixed values
+    """
+    raw_value = raw_value.strip()
+    negate = False
+
+    # Strip NOT FIRST (logical, not data)
+    if raw_value.upper().startswith("NOT "):
+        negate = True
+        raw_value = raw_value[4:].strip()
+
+    raw_value = normalize_range_text(raw_value)
+
+    codes = []
+
+    for part in raw_value.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+
+        if "-" in part:
+            start, end = part.split("-", 1)
+            codes.extend(expand_range(start.strip(), end.strip()))
+        else:
+            codes.append(part)
+
+    return negate, sorted(set(codes))
+
+
+# ==========================================================
+# SQL BUILDING
+# ==========================================================
+
+def build_condition(column: str, raw_value: str, params: list):
+    negate, codes = parse_codes(raw_value)
+
+    if not codes:
+        return ""
+
+    placeholders = ",".join(["?"] * len(codes))
+    params.extend(codes)
+
+    condition = f'{column} IN ({placeholders})'
+
+    if negate:
+        condition = f'NOT ({condition})'
+
+    return condition
+
+
+def build_sql(row: pd.Series, table: str):
+    conditions = []
+    params = []
+
+    for excel_col, db_col in COLUMN_MAP.items():
+        value = row.get(excel_col, "")
+        if value:
+            cond = build_condition(f'"{db_col}"', value, params)
+            if cond:
+                conditions.append(cond)
+
+    sql = f'SELECT *, "{table}" AS source_table FROM "{table}"'
+    if conditions:
+        sql += " WHERE " + " AND ".join(conditions)
+
+    return sql, params
+
+
+# ==========================================================
+# SQLITE SEARCH
+# ==========================================================
+
+def search_claims(row: pd.Series):
+    conn = sqlite3.connect(DB_PATH)
+    results = []
+
+    for table in TABLES:
+        sql, params = build_sql(row, table)
+        try:
+            df = pd.read_sql_query(sql, conn, params=params)
+            if not df.empty:
+                results.append(df)
+        except Exception as e:
+            print(f"[SQL ERROR] {table}: {e}")
+
+    conn.close()
+    return pd.concat(results, ignore_index=True) if results else pd.DataFrame()
+
+
+# ==========================================================
+# LANGGRAPH AGENT (FIXED STATE)
+# ==========================================================
+
+class ClaimState(TypedDict):
+    row: pd.Series
+    results: pd.DataFrame
+
+
+def manual_agent(state: ClaimState) -> ClaimState:
+    state["results"] = search_claims(state["row"])
+    return state
+
+
+graph = StateGraph(ClaimState)
+graph.add_node("manual_search", manual_agent)
+graph.set_entry_point("manual_search")
+agent = graph.compile()
+
+# ==========================================================
+# PROCESSING
+# ==========================================================
+
+def read_excel(file):
+    return pd.read_excel(file, dtype=str).fillna("")
+
+
+def process_file(df: pd.DataFrame):
+    output = {}
+
+    for _, row in df.iterrows():
+        variant = row["Variant ID"]
+        state = agent.invoke({"row": row})
+
+        if variant not in output:
+            output[variant] = []
+
+        if not state["results"].empty:
+            output[variant].append(state["results"])
+
+    return output
+
+
+def save_results(results: dict):
+    for variant, dfs in results.items():
+        final_df = pd.concat(dfs, ignore_index=True)
+        final_df.to_excel(
+            os.path.join(OUTPUT_DIR, f"{variant}.xlsx"),
+            index=False
+        )
+
+
+# ==========================================================
+# STREAMLIT UI
+# ==========================================================
+
+st.set_page_config(page_title="837 Claim Matcher", layout="wide")
+st.title("837 EDI Claim Matcher")
+
+uploaded_file = st.file_uploader("Upload Input Excel", type=["xlsx"])
+mode = st.radio("Search Mode", ["Manual", "LLM (Coming Soon)"])
+
+if st.button("Run Matching") and uploaded_file:
+    df = read_excel(uploaded_file)
+    results = process_file(df)
+    save_results(results)
+    st.success("Matching completed. Variant-wise Excel files generated.")
+
+
+
+
+
+
+
 # ==========================================================
 # 837 EDI CLAIM MATCHER – FINAL, FIXED, SINGLE FILE
 # ==========================================================
