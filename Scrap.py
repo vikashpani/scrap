@@ -1,5 +1,185 @@
 import duckdb
 import pandas as pd
+import os
+import re
+
+# ============================
+# PATHS (CHANGE THESE)
+# ============================
+CLAIMS_CSV = r"E:\data\claims.csv"      # huge claims CSV (| delimited)
+INPUT_EXCEL = r"E:\data\input.xlsx"     # variant rules input
+OUTPUT_DIR = r"E:\data\output"
+TEMP_DIR = r"E:\duckdb_temp"            # disk with enough space
+
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(TEMP_DIR, exist_ok=True)
+
+# ============================
+# EXCEL → CSV COLUMN MAP
+# ============================
+COLUMN_MAP = {
+    "Claim Type": "TYPE_OF_CLAIM",
+    "Service": "HCPS CPT CODE",
+    "Revenue Code": "REVENUE_CODE",
+    "Place of service": "TOB POS",
+    "Diagnosis code": "PRINCIPAL DIAGNOSIS",
+}
+
+# ============================
+# RANGE + LIST HANDLING
+# ============================
+def expand_alphanumeric_range(start, end):
+    """
+    Expands H54.2X11-H54.2X22 or 0250-0259
+    Falls back safely if structure mismatches
+    """
+    prefix_match_1 = re.match(r"([A-Z\.]*)(\d+)", start)
+    prefix_match_2 = re.match(r"([A-Z\.]*)(\d+)", end)
+
+    if not prefix_match_1 or not prefix_match_2:
+        return [start, end]
+
+    p1, n1 = prefix_match_1.groups()
+    p2, n2 = prefix_match_2.groups()
+
+    if p1 != p2:
+        return [start, end]
+
+    width = len(n1)
+    a, b = int(n1), int(n2)
+
+    return [f"{p1}{str(i).zfill(width)}" for i in range(a, b + 1)]
+
+
+def parse_codes(raw_value):
+    """
+    Handles:
+    - NOT H54.2X11-H54.2X22
+    - 0250-0259;0300
+    - A123;B456
+    """
+    raw = str(raw_value).strip()
+    negate = False
+
+    if raw.upper().startswith("NOT "):
+        negate = True
+        raw = raw[4:].strip()
+
+    raw = re.sub(r"\s*-\s*", "-", raw)
+
+    values = []
+    for part in raw.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+
+        if "-" in part:
+            s, e = part.split("-", 1)
+            values.extend(expand_alphanumeric_range(s, e))
+        else:
+            values.append(part)
+
+    return negate, sorted(set(values))
+
+
+# ============================
+# MAIN
+# ============================
+def main():
+    con = duckdb.connect()
+    con.execute(f"PRAGMA temp_directory='{TEMP_DIR}'")
+    con.execute("PRAGMA enable_object_cache=true")
+
+    print("📥 Creating CSV VIEW (no full load)...")
+
+    con.execute(f"""
+        CREATE OR REPLACE VIEW claims AS
+        SELECT *
+        FROM read_csv(
+            '{CLAIMS_CSV}',
+            delim='|',
+            header=true,
+            all_varchar=true,
+            ignore_errors=true
+        )
+    """)
+
+    # Normalize column names (trim + upper)
+    cols = con.execute("PRAGMA table_info('claims')").df()
+
+    for _, row in cols.iterrows():
+        clean = row["name"].strip().upper()
+        if row["name"] != clean:
+            con.execute(f'ALTER VIEW claims RENAME COLUMN "{row["name"]}" TO "{clean}"')
+
+    print("✅ CSV ready")
+
+    rules_df = pd.read_excel(INPUT_EXCEL)
+
+    for idx, rule in rules_df.iterrows():
+        variant_id = rule["Variant ID"]
+        print(f"\n🔎 Variant {variant_id}")
+
+        where_clauses = []
+        params = []
+
+        for excel_col, csv_col in COLUMN_MAP.items():
+            if excel_col not in rule or pd.isna(rule[excel_col]):
+                continue
+
+            negate, values = parse_codes(rule[excel_col])
+            if not values:
+                continue
+
+            placeholders = ",".join(["?"] * len(values))
+            operator = "NOT IN" if negate else "IN"
+
+            clause = f'UPPER(TRIM("{csv_col}")) {operator} ({placeholders})'
+            where_clauses.append(clause)
+            params.extend(v.upper() for v in values)
+
+        if not where_clauses:
+            print("⚠️ No valid filters — skipped")
+            continue
+
+        sql = f"""
+            SELECT *
+            FROM claims
+            WHERE {' AND '.join(where_clauses)}
+            LIMIT 1
+        """
+
+        # 🔍 DEBUG OUTPUT
+        print("🧠 SQL:")
+        print(sql)
+        print("🧪 Values:", params[:15], "..." if len(params) > 15 else "")
+
+        try:
+            result = con.execute(sql, params).df()
+        except Exception as e:
+            print("❌ Query failed:", e)
+            continue
+
+        if not result.empty:
+            out_file = os.path.join(OUTPUT_DIR, f"{variant_id}.xlsx")
+            result.to_excel(out_file, index=False)
+            print(f"✅ MATCH FOUND → {out_file}")
+        else:
+            print("❌ No match")
+
+    con.close()
+    print("\n🎉 DONE")
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+import duckdb
+import pandas as pd
 import re
 
 # =========================
