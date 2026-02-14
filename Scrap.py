@@ -1,3 +1,147 @@
+import duckdb
+import pandas as pd
+import re
+from typing import List, Tuple
+
+# =========================
+# CONFIG
+# =========================
+CLAIMS_CSV = "claims.csv"
+INPUT_EXCEL = "input.xlsx"
+
+COLUMN_MAP = {
+    "Claim Type": "TYPE_OF_CLAIM",
+    "Service": "HCPS CPT CODE",
+    "Revenue Code": "REVENUE_CODE",
+    "Place of service": "TOB POS",
+    "Diagnosis code": "PRINCIPAL DIAGNOSIS",
+}
+
+# =========================
+# RANGE HANDLING
+# =========================
+def normalize_range_text(value: str) -> str:
+    return re.sub(r"\s*-\s*", "-", value.strip())
+
+
+def split_prefix_numeric(code: str):
+    m = re.match(r"^([A-Z0-9\.]*?)(\d+)$", code)
+    if not m:
+        raise ValueError(f"Invalid code format: {code}")
+    return m.group(1), int(m.group(2)), len(m.group(2))
+
+
+def expand_range(start: str, end: str) -> List[str]:
+    sp, sn, sw = split_prefix_numeric(start)
+    ep, en, ew = split_prefix_numeric(end)
+    if sp != ep:
+        raise ValueError(f"Invalid range: {start}-{end}")
+    width = max(sw, ew)
+    return [f"{sp}{str(i).zfill(width)}" for i in range(sn, en + 1)]
+
+
+def parse_codes(raw: str) -> Tuple[bool, List[str]]:
+    raw = raw.strip()
+    negate = False
+
+    if raw.upper().startswith("NOT "):
+        negate = True
+        raw = raw[4:].strip()
+
+    raw = normalize_range_text(raw)
+    codes = []
+
+    for part in raw.split(";"):
+        part = part.strip()
+        if "-" in part:
+            s, e = part.split("-", 1)
+            codes.extend(expand_range(s.strip(), e.strip()))
+        else:
+            codes.append(part)
+
+    return negate, sorted(set(codes))
+
+
+# =========================
+# SQL BUILDER
+# =========================
+def build_where(row: pd.Series):
+    clauses = []
+    params = []
+
+    for excel_col, csv_col in COLUMN_MAP.items():
+        if excel_col not in row or pd.isna(row[excel_col]):
+            continue
+
+        negate, codes = parse_codes(str(row[excel_col]))
+        if not codes:
+            continue
+
+        placeholders = ",".join(["?"] * len(codes))
+        op = "NOT IN" if negate else "IN"
+
+        clauses.append(f'"{csv_col}" {op} ({placeholders})')
+        params.extend(codes)
+
+    if not clauses:
+        return None, None
+
+    return " AND ".join(clauses), params
+
+
+# =========================
+# SEARCH (FAST)
+# =========================
+def search_variant(con, row):
+    where, params = build_where(row)
+    if not where:
+        return None
+
+    sql = f"""
+        SELECT *
+        FROM read_csv_auto('{CLAIMS_CSV}')
+        WHERE {where}
+        LIMIT 1
+    """
+
+    result = con.execute(sql, params).df()
+    if not result.empty:
+        return result
+
+    return None
+
+
+# =========================
+# MAIN
+# =========================
+def main():
+    con = duckdb.connect()
+
+    input_df = pd.read_excel(INPUT_EXCEL)
+
+    for _, rule_row in input_df.iterrows():
+        variant = rule_row["Variant ID"]
+        print(f"Processing {variant}...")
+
+        match = search_variant(con, rule_row)
+
+        if match is not None:
+            match.to_excel(f"{variant}.xlsx", index=False)
+            print(f"✔ Match found for {variant}")
+        else:
+            print(f"✘ No match for {variant}")
+
+    con.close()
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+
 import pandas as pd
 import re
 from typing import List, Tuple, Dict
