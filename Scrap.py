@@ -6,6 +6,186 @@ import re
 # ============================
 # PATHS (CHANGE THESE)
 # ============================
+CLAIMS_CSV = r"E:\data\claims.csv"
+INPUT_EXCEL = r"E:\data\input.xlsx"
+OUTPUT_DIR = r"E:\data\output"
+TEMP_DIR = r"E:\duckdb_temp"
+
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(TEMP_DIR, exist_ok=True)
+
+# ============================
+# EXCEL → CSV COLUMN MAP
+# ============================
+COLUMN_MAP = {
+    "Claim Type": "TYPE_OF_CLAIM",
+    "Service": "HCPS CPT CODE",
+    "Revenue Code": "REVENUE_CODE",
+    "Place of service": "TOB POS",
+    "Diagnosis code": "PRINCIPAL DIAGNOSIS",
+}
+
+# ============================
+# RANGE + LIST HANDLING
+# ============================
+def expand_alphanumeric_range(start, end):
+    m1 = re.match(r"([A-Z\.]*)(\d+)", start)
+    m2 = re.match(r"([A-Z\.]*)(\d+)", end)
+
+    if not m1 or not m2 or m1.group(1) != m2.group(1):
+        return [start, end]
+
+    prefix = m1.group(1)
+    a, b = int(m1.group(2)), int(m2.group(2))
+    width = len(m1.group(2))
+
+    return [f"{prefix}{str(i).zfill(width)}" for i in range(a, b + 1)]
+
+
+def parse_codes(raw):
+    raw = str(raw).strip()
+    negate = False
+
+    if raw.upper().startswith("NOT "):
+        negate = True
+        raw = raw[4:].strip()
+
+    raw = re.sub(r"\s*-\s*", "-", raw)
+
+    values = []
+    for part in raw.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+
+        if "-" in part:
+            s, e = part.split("-", 1)
+            values.extend(expand_alphanumeric_range(s, e))
+        else:
+            values.append(part)
+
+    return negate, sorted(set(values))
+
+
+# ============================
+# MAIN
+# ============================
+def main():
+    con = duckdb.connect()
+    con.execute(f"PRAGMA temp_directory='{TEMP_DIR}'")
+    con.execute("PRAGMA enable_object_cache=true")
+
+    print("📥 Inspecting CSV header...")
+
+    # Read only header to get column names
+    header_df = con.execute(f"""
+        SELECT * FROM read_csv(
+            '{CLAIMS_CSV}',
+            delim='|',
+            header=true,
+            all_varchar=true,
+            sample_size=1
+        )
+        LIMIT 0
+    """).df()
+
+    # Build normalized SELECT
+    select_cols = []
+    for col in header_df.columns:
+        clean = col.strip().upper()
+        select_cols.append(f'"{col}" AS "{clean}"')
+
+    select_sql = ",\n    ".join(select_cols)
+
+    print("📥 Creating normalized VIEW...")
+
+    con.execute(f"""
+        CREATE OR REPLACE VIEW claims AS
+        SELECT
+            {select_sql}
+        FROM read_csv(
+            '{CLAIMS_CSV}',
+            delim='|',
+            header=true,
+            all_varchar=true,
+            ignore_errors=true
+        )
+    """)
+
+    print("✅ CSV view ready")
+
+    rules_df = pd.read_excel(INPUT_EXCEL)
+
+    for _, rule in rules_df.iterrows():
+        variant_id = rule["Variant ID"]
+        print(f"\n🔎 Variant {variant_id}")
+
+        where_clauses = []
+        params = []
+
+        for excel_col, csv_col in COLUMN_MAP.items():
+            if excel_col not in rule or pd.isna(rule[excel_col]):
+                continue
+
+            negate, values = parse_codes(rule[excel_col])
+            if not values:
+                continue
+
+            placeholders = ",".join(["?"] * len(values))
+            op = "NOT IN" if negate else "IN"
+
+            where_clauses.append(
+                f'UPPER(TRIM("{csv_col}")) {op} ({placeholders})'
+            )
+            params.extend(v.upper() for v in values)
+
+        if not where_clauses:
+            print("⚠️ No filters — skipped")
+            continue
+
+        sql = f"""
+            SELECT *
+            FROM claims
+            WHERE {' AND '.join(where_clauses)}
+            LIMIT 1
+        """
+
+        print("🧠 SQL:")
+        print(sql)
+        print("🧪 Params:", params[:10])
+
+        try:
+            df = con.execute(sql, params).df()
+        except Exception as e:
+            print("❌ Query error:", e)
+            continue
+
+        if not df.empty:
+            out = os.path.join(OUTPUT_DIR, f"{variant_id}.xlsx")
+            df.to_excel(out, index=False)
+            print(f"✅ MATCH FOUND → {out}")
+        else:
+            print("❌ No match")
+
+    con.close()
+    print("\n🎉 DONE")
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+import duckdb
+import pandas as pd
+import os
+import re
+
+# ============================
+# PATHS (CHANGE THESE)
+# ============================
 CLAIMS_CSV = r"E:\data\claims.csv"      # huge claims CSV (| delimited)
 INPUT_EXCEL = r"E:\data\input.xlsx"     # variant rules input
 OUTPUT_DIR = r"E:\data\output"
