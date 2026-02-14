@@ -1,4 +1,152 @@
 import pandas as pd
+import re
+from typing import List, Tuple, Dict
+
+# =========================
+# CONFIG
+# =========================
+CLAIMS_CSV_PATH = "claims.csv"     # 35M rows CSV
+INPUT_EXCEL_PATH = "input.xlsx"   # rules / variants
+
+COLUMN_MAP = {
+    "Claim Type": "TYPE_OFCLAIM",
+    "Service": "HCPS CPT CODE",
+    "Revenue Code": "REVENUE_CODE",
+    "Place of Service": "TOB POS",
+    "Diagnosis code": "PRINCIPAL_DIAGNOSIS",
+}
+
+# =========================
+# RANGE HANDLING
+# =========================
+def normalize_range_text(value: str) -> str:
+    return re.sub(r"\s*-\s*", "-", value.strip())
+
+
+def split_prefix_numeric(code: str):
+    m = re.match(r"^([A-Z0-9\.]*?)(\d+)$", code)
+    if not m:
+        raise ValueError(f"Invalid code format: {code}")
+    return m.group(1), int(m.group(2)), len(m.group(2))
+
+
+def expand_range(start: str, end: str) -> List[str]:
+    sp, sn, sw = split_prefix_numeric(start)
+    ep, en, ew = split_prefix_numeric(end)
+
+    if sp != ep:
+        raise ValueError(f"Invalid range: {start}-{end}")
+
+    width = max(sw, ew)
+    return [f"{sp}{str(i).zfill(width)}" for i in range(sn, en + 1)]
+
+
+def parse_codes(raw_value: str) -> Tuple[bool, List[str]]:
+    raw_value = raw_value.strip()
+    negate = False
+
+    if raw_value.upper().startswith("NOT "):
+        negate = True
+        raw_value = raw_value[4:].strip()
+
+    raw_value = normalize_range_text(raw_value)
+    codes = []
+
+    for part in raw_value.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+
+        if "-" in part:
+            start, end = part.split("-", 1)
+            codes.extend(expand_range(start.strip(), end.strip()))
+        else:
+            codes.append(part)
+
+    return negate, sorted(set(codes))
+
+
+# =========================
+# CSV SEARCH (FAST)
+# =========================
+def find_one_match(claims_df: pd.DataFrame, row: pd.Series):
+    mask = pd.Series(True, index=claims_df.index)
+
+    for input_col, claim_col in COLUMN_MAP.items():
+        if input_col not in row or pd.isna(row[input_col]):
+            continue
+
+        negate, codes = parse_codes(str(row[input_col]))
+
+        if negate:
+            mask &= ~claims_df[claim_col].astype(str).isin(codes)
+        else:
+            mask &= claims_df[claim_col].astype(str).isin(codes)
+
+        # 🚀 SHORT-CIRCUIT
+        if not mask.any():
+            return None
+
+    matches = claims_df[mask]
+    if not matches.empty:
+        return matches.iloc[[0]]  # return only ONE row
+
+    return None
+
+
+# =========================
+# PROCESS FILE
+# =========================
+def process_variants(input_df: pd.DataFrame, claims_df: pd.DataFrame):
+    results = {}
+
+    for _, rule_row in input_df.iterrows():
+        variant_id = rule_row["Variant ID"]
+
+        match = find_one_match(claims_df, rule_row)
+
+        if match is not None:
+            results[variant_id] = match
+
+    return results
+
+
+# =========================
+# SAVE OUTPUT
+# =========================
+def save_results(results: Dict[str, pd.DataFrame]):
+    for variant, df in results.items():
+        df.to_excel(f"{variant}.xlsx", index=False)
+
+
+# =========================
+# MAIN
+# =========================
+if __name__ == "__main__":
+    print("Loading claims CSV...")
+    claims_df = pd.read_csv(
+        CLAIMS_CSV_PATH,
+        dtype=str,           # 🔑 CRITICAL for diagnosis / revenue codes
+        low_memory=False
+    )
+
+    print("Loading input Excel...")
+    input_df = pd.read_excel(INPUT_EXCEL_PATH)
+
+    print("Processing variants...")
+    results = process_variants(input_df, claims_df)
+
+    print(f"Matches found: {len(results)}")
+    save_results(results)
+
+    print("Done.")
+
+
+
+
+
+
+import pandas as pd
 import sqlite3
 import re
 from typing import List, Tuple, Dict
