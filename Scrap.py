@@ -1,3 +1,197 @@
+import pandas as pd
+import sqlite3
+import re
+from typing import List, Tuple, Dict
+
+# ==========================
+# CONFIG
+# ==========================
+DB_PATH = "claims.db"
+
+TABLES = [
+    "MCAD_data_chunk_1",
+    "MCAD_data_chunk_2",
+    "MCAD_data_chunk_3",
+    "MCAD_data_chunk_4",
+    "MCAD_data_chunk_5",
+]
+
+COLUMN_MAP = {
+    "Claim Type": "TYPE_OFCLAIM",
+    "Service": "HCPS CPT CODE",
+    "Revenue Code": "REVENUE_CODE",
+    "Place of Service": "TOB POS",
+    "Diagnosis code": "PRINCIPAL_DIAGNOSIS",
+}
+
+# ==========================
+# RANGE & CODE UTILITIES
+# ==========================
+def normalize_range_text(value: str) -> str:
+    return re.sub(r"\s*-\s*", "-", value.strip())
+
+
+def split_prefix_numeric(code: str):
+    m = re.match(r"^([A-Z0-9\.]*?)(\d+)$", code)
+    if not m:
+        raise ValueError(f"Invalid code format: {code}")
+    return m.group(1), int(m.group(2)), len(m.group(2))
+
+
+def expand_range(start: str, end: str) -> List[str]:
+    sp, sn, sw = split_prefix_numeric(start)
+    ep, en, ew = split_prefix_numeric(end)
+
+    if sp != ep:
+        raise ValueError(f"Invalid range: {start}-{end}")
+
+    width = max(sw, ew)
+    return [f"{sp}{str(i).zfill(width)}" for i in range(sn, en + 1)]
+
+
+def parse_codes(raw_value: str) -> Tuple[bool, List[str]]:
+    raw_value = raw_value.strip()
+    negate = False
+
+    if raw_value.upper().startswith("NOT "):
+        negate = True
+        raw_value = raw_value[4:].strip()
+
+    raw_value = normalize_range_text(raw_value)
+    codes = []
+
+    for part in raw_value.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+
+        if "-" in part:
+            start, end = part.split("-", 1)
+            start, end = start.strip(), end.strip()
+            if start.upper().startswith("NOT"):
+                continue
+            codes.extend(expand_range(start, end))
+        else:
+            codes.append(part)
+
+    return negate, sorted(set(codes))
+
+
+# ==========================
+# SQL BUILDER
+# ==========================
+def build_sql(row: pd.Series, table: str) -> Tuple[str, List[str]]:
+    where_clauses = []
+    params = []
+
+    for input_col, db_col in COLUMN_MAP.items():
+        if input_col not in row or pd.isna(row[input_col]):
+            continue
+
+        negate, codes = parse_codes(str(row[input_col]))
+
+        if not codes:
+            continue
+
+        placeholders = ",".join(["?"] * len(codes))
+        operator = "NOT IN" if negate else "IN"
+
+        where_clauses.append(f'"{db_col}" {operator} ({placeholders})')
+        params.extend(codes)
+
+    if not where_clauses:
+        return None, None
+
+    sql = f'''
+        SELECT *, '{table}' AS source_table
+        FROM "{table}"
+        WHERE {' AND '.join(where_clauses)}
+    '''
+    return sql, params
+
+
+# ==========================
+# SEARCH (SHORT-CIRCUIT)
+# ==========================
+def search_claims(row: pd.Series) -> pd.DataFrame:
+    conn = sqlite3.connect(DB_PATH)
+
+    for table in TABLES:
+        sql, params = build_sql(row, table)
+        if not sql:
+            continue
+
+        sql += " LIMIT 1"  # 🚀 STOP AFTER FIRST MATCH
+
+        try:
+            df = pd.read_sql_query(sql, conn, params=params)
+            if not df.empty:
+                conn.close()
+                return df
+        except Exception as e:
+            print(f"[SQL ERROR] {table}: {e}")
+
+    conn.close()
+    return pd.DataFrame()
+
+
+# ==========================
+# AGENT (MANUAL MODE)
+# ==========================
+def manual_agent(state: Dict):
+    row = state["row"]
+    result = search_claims(row)
+    return {"results": result}
+
+
+# ==========================
+# PROCESS INPUT FILE
+# ==========================
+def process_file(df: pd.DataFrame):
+    outputs = {}
+
+    for _, row in df.iterrows():
+        variant_id = row["Variant ID"]
+
+        state = manual_agent({"row": row})
+
+        if variant_id not in outputs:
+            outputs[variant_id] = []
+
+        if not state["results"].empty:
+            outputs[variant_id].append(state["results"])
+
+    return outputs
+
+
+# ==========================
+# SAVE OUTPUT
+# ==========================
+def save_results(results: Dict[str, List[pd.DataFrame]]):
+    for variant, dfs in results.items():
+        if not dfs:
+            continue
+        final_df = pd.concat(dfs, ignore_index=True)
+        final_df.to_excel(f"{variant}.xlsx", index=False)
+
+
+# ==========================
+# ENTRY POINT (TEST)
+# ==========================
+if __name__ == "__main__":
+    input_df = pd.read_excel("input.xlsx")
+    results = process_file(input_df)
+    save_results(results)
+
+
+
+
+
+
+
+
+
+
 
 # ==========================================================
 # 837 EDI CLAIM MATCHER – FINAL STABLE VERSION
