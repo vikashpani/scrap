@@ -1,3 +1,138 @@
+
+import duckdb
+import pandas as pd
+import os
+
+# ============================
+# PATHS (CHANGE THESE)
+# ============================
+CLAIMS_CSV = r"E:\data\claims.csv"
+
+CROSSWALK_FILES = [
+    r"E:\data\crosswalk_1.xlsx",
+    r"E:\data\crosswalk_2.xlsx",
+    r"E:\data\crosswalk_3.xlsx",
+    r"E:\data\crosswalk_4.xlsx",
+]
+
+OUTPUT_FILE = r"E:\data\final_output.xlsx"
+TEMP_DIR = r"E:\duckdb_temp"
+
+os.makedirs(TEMP_DIR, exist_ok=True)
+
+# ============================
+# YOUR SQL QUERY (EDIT THIS)
+# ============================
+USER_SQL = """
+SELECT
+    "CLAIM_ID",
+    "PATIENT CONTROL NUMBER",
+    "MEMBER_ID",
+    "TOB POS",
+    "DIAGNOSIS MODIFIER",
+    "DATE OF SERVICE",
+    "TOTAL CHARGE AMOUNT",
+    "HCPS CPT CODE"
+FROM claims
+WHERE
+    "PRINCIPAL DIAGNOSIS" LIKE 'H54.2X%'
+LIMIT 100
+"""
+
+# ============================
+# MAIN
+# ============================
+def main():
+    con = duckdb.connect()
+    con.execute(f"PRAGMA temp_directory='{TEMP_DIR}'")
+    con.execute("PRAGMA enable_object_cache=true")
+
+    print("📥 Creating CSV view...")
+
+    con.execute(f"""
+        CREATE OR REPLACE VIEW claims AS
+        SELECT *
+        FROM read_csv(
+            '{CLAIMS_CSV}',
+            delim='|',
+            header=true,
+            all_varchar=true,
+            ignore_errors=true
+        )
+    """)
+
+    print("🧠 Running SQL...")
+    print(USER_SQL)
+
+    try:
+        claims_df = con.execute(USER_SQL).df()
+    except Exception as e:
+        print("❌ SQL ERROR:")
+        print(e)
+        return
+
+    if claims_df.empty:
+        print("⚠️ No claims matched SQL query")
+        return
+
+    print(f"✅ Claims matched: {len(claims_df)}")
+
+    # ============================
+    # LOAD & UNION CROSSWALKS
+    # ============================
+    print("📥 Loading crosswalk files...")
+
+    crosswalk_dfs = []
+
+    for path in CROSSWALK_FILES:
+        print(f"   → {path}")
+        df = pd.read_excel(path)
+
+        # normalize column names
+        df.columns = [c.strip().upper() for c in df.columns]
+
+        if "CLAIM_ID" not in df.columns or "FILENAME" not in df.columns:
+            raise ValueError(f"Invalid crosswalk format: {path}")
+
+        crosswalk_dfs.append(df[["CLAIM_ID", "FILENAME"]])
+
+    crosswalk_df = pd.concat(crosswalk_dfs, ignore_index=True).drop_duplicates()
+
+    print(f"✅ Total crosswalk rows: {len(crosswalk_df)}")
+
+    # ============================
+    # NORMALIZE CLAIMS COLUMNS
+    # ============================
+    claims_df.columns = [c.strip().upper() for c in claims_df.columns]
+
+    # ============================
+    # JOIN CLAIMS ↔ CROSSWALK
+    # ============================
+    final_df = claims_df.merge(
+        crosswalk_df,
+        on="CLAIM_ID",
+        how="left"
+    )
+
+    # ============================
+    # SAVE OUTPUT
+    # ============================
+    final_df.to_excel(OUTPUT_FILE, index=False)
+
+    print("\n🎉 DONE")
+    print(f"📄 Output written to: {OUTPUT_FILE}")
+    print(f"📊 Final rows: {len(final_df)}")
+    print(f"📎 Rows with filename: {final_df['FILENAME'].notna().sum()}")
+
+    con.close()
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
 import duckdb
 import pandas as pd
 import os
