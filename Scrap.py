@@ -1,3 +1,10 @@
+Get-ChildItem D:\workspace\java_env -Recurse -Directory | Where-Object {
+    Test-Path "$($_.FullName)\bin\javac.exe"
+}
+
+
+
+
 from agent import build_graph
 
 app = build_graph()
