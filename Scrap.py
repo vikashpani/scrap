@@ -1,3 +1,19 @@
+from agent import build_graph
+
+app = build_graph()
+
+while True:
+    user_input = input("\nYou: ")
+    if user_input.lower() in ("exit", "quit"):
+        break
+
+    response = app.invoke({"input": user_input})
+    print("\nAgent:\n", response["output"])
+
+
+
+
+
 from langgraph.graph import StateGraph
 from langchain_openai import ChatOpenAI
 from state import AgentState
