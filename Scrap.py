@@ -1,3 +1,47 @@
+import paramiko
+import os
+
+# SOURCE FILE
+local_file = r"C:\source_folder\example.txt"
+
+# DESTINATION DETAILS
+remote_host = "192.168.1.20"
+username = "remote_user"
+password = "remote_password"
+remote_folder = r"C:\target_folder"
+
+# Create SSH client
+ssh = paramiko.SSHClient()
+ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+ssh.connect(remote_host, username=username, password=password)
+
+# Open SFTP
+sftp = ssh.open_sftp()
+
+# Ensure destination folder exists
+try:
+    sftp.chdir(remote_folder)
+except IOError:
+    sftp.mkdir(remote_folder)
+    sftp.chdir(remote_folder)
+
+# Transfer file
+filename = os.path.basename(local_file)
+sftp.put(local_file, f"{remote_folder}\\{filename}")
+
+# Close connections
+sftp.close()
+ssh.close()
+
+print("File transferred successfully.")
+
+
+
+
+
+
+
+
 
 import duckdb
 import pandas as pd
