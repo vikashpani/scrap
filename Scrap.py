@@ -1,3 +1,43 @@
+
+import subprocess
+import os
+
+# === PATHS (CHANGE ONLY IF YOUR DRIVE LETTER IS DIFFERENT) ===
+JAVA_BIN = r"D:\workspace\java_env\jdk-11\bin"
+MAVEN_BIN = r"D:\workspace\java_env\apache-maven-3.9.6\bin"
+JAVA_PROJECT_DIR = r"D:\workspace\ONEMPH"   # must contain pom.xml
+
+def run_edi_837_claim_creation() -> str:
+    # Make Java & Maven available ONLY for this process
+    os.environ["PATH"] = (
+        JAVA_BIN + ";" +
+        MAVEN_BIN + ";" +
+        os.environ.get("PATH", "")
+    )
+
+    command = [
+        "mvn",
+        "test",
+        "-Dtest=EDI837ClaimCreationRunner"
+    ]
+
+    result = subprocess.run(
+        command,
+        cwd=JAVA_PROJECT_DIR,
+        capture_output=True,
+        text=True,
+        shell=True
+    )
+
+    if result.returncode == 0:
+        return "✅ BUILD SUCCESS\n\n" + result.stdout
+    else:
+        return "❌ BUILD FAILED\n\n" + result.stderr + "\n" + result.stdout
+
+
+
+
+
 import paramiko
 import os
 
