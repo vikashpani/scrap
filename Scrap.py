@@ -1,3 +1,29 @@
+from langgraph.graph import StateGraph
+from langchain_openai import ChatOpenAI
+from state import AgentState
+from tools import run_edi_837_claim_creation
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+def agent_node(state: AgentState):
+    user_input = state["input"].lower()
+
+    if "run" in user_input and "837" in user_input:
+        result = run_edi_837_claim_creation()
+        return {"output": result}
+
+    return {"output": "Say: run 837 claim test"}
+
+def build_graph():
+    graph = StateGraph(AgentState)
+    graph.add_node("agent", agent_node)
+    graph.set_entry_point("agent")
+    return graph.compile()
+
+
+
+
+
 
 import subprocess
 import os
