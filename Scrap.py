@@ -1,3 +1,34 @@
+def map_column(rows, key, func):
+    for row in rows:
+        if key in row:
+            row[key] = func(row[key])
+    return rows
+
+
+def main():
+    n = int(input())
+    rows = []
+
+    for _ in range(n):
+        parts = input().split()
+        row = {parts[i].lower(): parts[i + 1] for i in range(0, len(parts), 2)}
+        rows.append(row)
+
+    key = input().strip().lower()
+
+    result = map_column(rows, key, str.upper)
+
+    # clean output formatting (important for platforms)
+    print([row for row in result])
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
 Get-ChildItem D:\workspace\java_env -Recurse -Directory | Where-Object {
     Test-Path "$($_.FullName)\bin\javac.exe"
 }
